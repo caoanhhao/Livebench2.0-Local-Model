@@ -1,0 +1,1179 @@
+import logging
+import os
+import sys
+import time
+import traceback
+from typing import Any, Protocol, cast
+
+import httpx
+from openai import Stream
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
+                      wait_fixed, wait_incrementing)
+
+from livebench.model.api_model_config import RESPONSES_API_PROVIDERS
+
+logging.basicConfig(stream=sys.stdout, level=logging.WARNING)
+
+
+logger = logging.getLogger(__name__)
+
+# API setting constants
+API_MAX_RETRY = 1
+API_RETRY_SLEEP_MIN = 10
+API_RETRY_SLEEP_MAX = 60
+API_ERROR_OUTPUT = "$ERROR$"
+TIMEOUT = 1800
+
+# Models gated on 30-day retention (Fable/Mythos tier): the org-default
+# ANTHROPIC_API_KEY is ZDR and gets 400 model_not_available for them, so they
+# use the non-ZDR key instead. Substring-matched against the API model name.
+ANTHROPIC_SKIP_ZDR_MODELS = ('claude-fable-5', 'claude-melon')
+
+
+def anthropic_api_key(model: str) -> str | None:
+    if any(name in model for name in ANTHROPIC_SKIP_ZDR_MODELS) and os.environ.get('ANTHROPIC_SKIP_ZDR_API_KEY'):
+        return os.environ['ANTHROPIC_SKIP_ZDR_API_KEY']
+    return os.environ.get('ANTHROPIC_API_KEY')
+
+
+def billed_output_tokens(usage: Any, provider_total_tokens: int | None = None) -> int | None:
+    """Billed output tokens from an OpenAI-shaped usage (litellm Usage or openai SDK CompletionUsage):
+    completion_tokens, plus reasoning_tokens only when the provider accounts reasoning OUTSIDE
+    completion_tokens.
+
+    completion_tokens_details.reasoning_tokens is a breakdown, not an addend, for most providers:
+    OpenAI, Anthropic and Mistral include thinking in completion_tokens, and when the provider
+    reports no reasoning count litellm fills one in from its own token_counter over the reasoning
+    text. Adding it unconditionally double-counted thinking (Mistral Large 4: recorded output was
+    ~2x; every exhausted answer corrected to exactly max_tokens once litellm's estimate was taken
+    back out). xAI is the exception: it bills reasoning outside completion_tokens and says so in
+    total_tokens (= prompt + completion + reasoning). That invariant is the only signal used here --
+    it is the same test litellm's own xAI transform applies before folding, so it also stays right
+    on litellm versions that already fold xAI reasoning in (total then equals prompt + completion).
+
+    provider_total_tokens: the provider's own total for streamed responses, whose usage is rebuilt
+    by stream_chunk_builder with total recomputed as prompt + completion.
+    """
+    completion = getattr(usage, 'completion_tokens', None)
+    if completion is None:
+        return None
+    _ctd = getattr(usage, 'completion_tokens_details', None)
+    # some OpenAI-compatible providers report it top-level instead of under completion_tokens_details
+    reasoning = (getattr(_ctd, 'reasoning_tokens', None) if _ctd is not None else None) or getattr(usage, 'reasoning_tokens', None) or 0
+    prompt = getattr(usage, 'prompt_tokens', None) or 0
+    total = provider_total_tokens if provider_total_tokens is not None else getattr(usage, 'total_tokens', None)
+    if reasoning and total == prompt + completion + reasoning:
+        return completion + reasoning
+    return completion
+
+
+def litellm_stream_provider_total(chunks: list) -> int | None:
+    """total_tokens from the last streamed chunk that carries usage (the provider's own figure)."""
+    for chunk in reversed(chunks):
+        usage = getattr(chunk, 'usage', None)
+        if usage is not None:
+            return getattr(usage, 'total_tokens', None)
+    return None
+
+# model api function takes in Model, list of messages, temperature, max tokens, api kwargs, and an api dict
+# returns tuple of (output, num tokens)
+Conversation = list[dict[str, str]]
+API_Kwargs = dict[str, str | float | int | dict[str, str] | None]
+
+class ModelAPI(Protocol):
+    def __call__(self, model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None, api_dict: dict[str, str] | None, stream: bool) -> tuple[str, int, dict[str, Any] | None]:
+        ...
+
+
+def retry_fail(retry_state):
+    exception = retry_state.outcome.exception()
+    error = exception.__class__.__name__ if exception else "Unknown"
+    error_msg = str(exception)[:200] if exception else ""
+    print(f"all retries failed: {error}: {error_msg}")
+    return API_ERROR_OUTPUT, 0, {"eval_status": "api_error", "error": error, "error_msg": error_msg}
+
+
+def retry_log(retry_state):
+    exception = retry_state.outcome.exception()
+    logger.warning(f"{retry_state.fn.__name__}: attempt {retry_state.attempt_number} failed with {exception.__class__.__name__}: {exception}; {retry_state.seconds_since_start} seconds elapsed total")
+    logger.warning("Exception stack trace:", exc_info=exception)
+
+
+def _split_content_chunks(content) -> tuple[str, str]:
+    """(text, reasoning) from a message/delta content that may be a chunk list.
+
+    Mistral reasoning models (reasoning_effort set) return content as a list:
+    [{type:'thinking', thinking:[{type:'text', text:...}]}, {type:'text', text:...}],
+    and stream deltas mix plain strings with such lists. Plain strings pass through.
+    """
+    if content is None:
+        return '', ''
+    if isinstance(content, str):
+        return content, ''
+    text, reasoning = [], []
+    for chunk in content:
+        chunk = chunk if isinstance(chunk, dict) else chunk.model_dump()
+        if chunk.get('type') == 'text':
+            text.append(chunk.get('text') or '')
+        elif chunk.get('type') == 'thinking':
+            for inner in chunk.get('thinking') or []:
+                inner = inner if isinstance(inner, dict) else inner.model_dump()
+                if inner.get('type') == 'text':
+                    reasoning.append(inner.get('text') or '')
+    return ''.join(text), ''.join(reasoning)
+
+
+@retry(
+    stop=stop_after_attempt(API_MAX_RETRY),
+    wait=wait_fixed(API_RETRY_SLEEP_MIN),
+    retry=retry_if_exception_type(Exception),
+    after=retry_log,
+    retry_error_callback=retry_fail
+)
+def chat_completion_openai(
+    model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False
+) -> tuple[str, int, dict[str, Any] | None]:
+    from openai import NOT_GIVEN, OpenAI
+
+    if api_dict is not None:
+        client = OpenAI(
+            api_key=api_dict["api_key"], base_url=api_dict["api_base"], timeout=httpx.Timeout(timeout=TIMEOUT, connect=10.0)
+        )
+
+    else:
+        client = OpenAI(timeout=1000)
+
+    api_kwargs: API_Kwargs = {
+        'temperature': temperature
+    }
+
+    if model_api_kwargs is not None:
+        model_api_kwargs = {key: value for key, value in model_api_kwargs.items()}
+        api_kwargs.update(model_api_kwargs)
+
+    if 'max_tokens' not in api_kwargs and 'max_completion_tokens' not in api_kwargs:
+        # gpt models can use max_completion_tokens but other apis might not support this
+        api_kwargs['max_completion_tokens'] = max_tokens if 'gpt' in model else None
+        api_kwargs['max_tokens'] = max_tokens if 'gpt' not in model else None
+
+    actual_api_kwargs = {key: (value if value is not None else NOT_GIVEN) for key, value in api_kwargs.items()}
+
+    if 'stream' in actual_api_kwargs:
+        stream = actual_api_kwargs['stream']
+        del actual_api_kwargs['stream']
+
+    # Thinking models return their chain of thought on a separate field, never in
+    # `content`. Without capturing it here the reasoning is generated, billed, and
+    # discarded — answer rows keep only the final visible text.
+    reasoning_text = ''
+
+    try:
+        if stream:
+            stream: Stream[ChatCompletionChunk] = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                stream=True,
+                stream_options={'include_usage': True},
+                **actual_api_kwargs
+            )
+
+            message = ''
+            num_tokens = None
+            input_tokens = None
+            cached_tokens = None
+            try:
+                for chunk in stream:
+                    if chunk.choices and len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None:
+                        _text, _thinking = _split_content_chunks(chunk.choices[0].delta.content)
+                        message += _text
+                        reasoning_text += _thinking
+                    if chunk.choices and len(chunk.choices) > 0:
+                        _r = getattr(chunk.choices[0].delta, 'reasoning_content', None)
+                        if _r:
+                            reasoning_text += _r
+                    if chunk.usage is not None:
+                        # raw provider usage (no litellm rewrite), so its own total_tokens is intact
+                        num_tokens = billed_output_tokens(chunk.usage)
+                        input_tokens = chunk.usage.prompt_tokens
+                        if hasattr(chunk.usage, 'prompt_tokens_details') and chunk.usage.prompt_tokens_details is not None:
+                            cached_tokens = chunk.usage.prompt_tokens_details.cached_tokens
+            except Exception:
+                if message != '':
+                    print(message)
+                raise
+        else:
+            response: ChatCompletion = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                stream=False,
+                **actual_api_kwargs
+            )
+            if response is None:
+                raise Exception("No response returned from OpenAI")
+            elif response.choices is None:
+                print(response)
+                raise Exception("API request failed")
+            if isinstance(response.choices[0], str):
+                message = response.choices[0]
+            else:
+                message, reasoning_text = _split_content_chunks(response.choices[0].message.content)
+                reasoning_text = getattr(response.choices[0].message, 'reasoning_content', None) or reasoning_text
+            input_tokens = None
+            cached_tokens = None
+            if response.usage is not None:
+                num_tokens = billed_output_tokens(response.usage)
+                input_tokens = response.usage.prompt_tokens
+                if hasattr(response.usage, 'prompt_tokens_details') and response.usage.prompt_tokens_details is not None:
+                    cached_tokens = response.usage.prompt_tokens_details.cached_tokens
+            else:
+                num_tokens = None
+
+            if hasattr(response, 'provider') and response.provider is not None:
+                metadata = {
+                    'provider': response.provider
+                }
+
+            if message is None or message == '':
+                print(response)
+
+        if message is None or message == '':
+            raise Exception("No message returned from OpenAI")
+        if num_tokens is None:
+            num_tokens = -1
+        output = message
+
+        metadata: dict[str, Any] | None = None
+        if input_tokens is not None:
+            metadata = {'input_tokens': input_tokens}
+            if cached_tokens is not None:
+                metadata['cached_tokens'] = cached_tokens
+
+        if reasoning_text:
+            metadata = metadata if metadata is not None else {}
+            metadata['reasoning_content'] = reasoning_text
+
+        return output, num_tokens, metadata
+    except Exception as e:
+        if "invalid_prompt" in str(e).lower():
+            print("invalid prompt (model refusal), giving up")
+            return API_ERROR_OUTPUT, 0, {"eval_status": "api_error", "error": "InvalidPrompt", "error_msg": str(e)[:200]}
+        raise e
+
+
+def chat_completion_openai_responses(model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False) -> tuple[str, int]:
+    from openai import NOT_GIVEN, OpenAI
+
+    if api_dict is not None:
+        client = OpenAI(
+            api_key=api_dict["api_key"], base_url=api_dict["api_base"], timeout=httpx.Timeout(timeout=TIMEOUT, connect=20.0)
+        )
+    else:
+        client = OpenAI(timeout=TIMEOUT)
+
+    messages = [message for message in messages if message['role'] == 'user']
+    developer_message = ''
+    if 'o1' in model or 'o3' in model or 'o4-mini' in model and 'Formatting reenabled' not in messages[0]['content']:
+        developer_message = 'Formatting reenabled\n'
+
+    api_kwargs: API_Kwargs = {
+        'max_output_tokens': max_tokens if 'gpt' in model else None,
+        'temperature': temperature
+    }
+
+    if model_api_kwargs is not None:
+        model_api_kwargs = {key: value for key, value in model_api_kwargs.items()}
+        api_kwargs.update(model_api_kwargs)
+
+    if 'reasoning_effort' in api_kwargs:
+        reasoning = {'effort': api_kwargs['reasoning_effort']}
+        api_kwargs['reasoning'] = reasoning
+        del api_kwargs['reasoning_effort']
+
+    if 'max_completion_tokens' in api_kwargs:
+        api_kwargs['max_output_tokens'] = api_kwargs['max_completion_tokens']
+        del api_kwargs['max_completion_tokens']
+
+    actual_api_kwargs = {key: (value if value is not None else NOT_GIVEN) for key, value in api_kwargs.items()}
+
+    input = '\n'.join([message['content'] for message in messages])
+
+    output_text = 'BLOCKED'
+    output_tokens = 1
+    # Stream when asked (function arg or `stream: true` in the model config's api_kwargs).
+    # A non-streamed Responses call must finish inside the provider's gateway timeout, so a
+    # model that spends 10+ minutes on one answer dies with "upstream request timeout" and is
+    # graded 0 — observed on deepseek-v4-flash-0731 via Fireworks, where the longest tasks
+    # (consecutive_events) failed 74% of the time. Streaming keeps bytes flowing (first token
+    # in <1s), so the request survives; the final response object is identical either way.
+    want_stream = bool(actual_api_kwargs.pop('stream', False)) or stream
+    try:
+        if want_stream:
+            response = None
+            for event in client.responses.create(
+                model=model,
+                instructions=developer_message,
+                input=input,
+                store=False,
+                stream=True,
+                **actual_api_kwargs
+            ):
+                # the terminal event carries the assembled response (text + usage)
+                if getattr(event, 'type', '') in ('response.completed', 'response.incomplete'):
+                    response = getattr(event, 'response', None)
+            if response is None:
+                raise Exception("Stream ended without a completed response event")
+        else:
+            response = client.responses.create(
+                model=model,
+                instructions=developer_message,
+                input=input,
+                store=False,
+                **actual_api_kwargs
+            )
+
+        if response is None:
+            raise Exception("No response received from OpenAI Responses")
+        elif response.output_text is None:
+            raise Exception("No output text received from OpenAI Responses")
+        elif response.usage is None:
+            raise Exception("No usage received from OpenAI Responses")
+
+        output_text = response.output_text
+        output_tokens = response.usage.output_tokens
+
+    except Exception as e:
+        if 'risk' in str(e):
+            pass
+        else:
+            raise
+
+    return output_text, output_tokens
+
+@retry(
+    stop=stop_after_attempt(API_MAX_RETRY),
+    wait=wait_fixed(API_RETRY_SLEEP_MIN),
+    retry=retry_if_exception_type(Exception),
+    after=retry_log,
+    retry_error_callback=retry_fail
+)
+def chat_completion_aws(model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False) -> tuple[str, int]:
+    import boto3
+
+    # AWS region can be customized via api_dict
+    region_name = "us-east-1"
+    if api_dict is not None and "region_name" in api_dict:
+        region_name = api_dict["region_name"]
+
+    brt = boto3.client("bedrock-runtime", region_name=region_name)
+    user_messages = [m['content'] for m in messages if m['role'] == "user"]
+    prompt = user_messages[0] if user_messages else ""
+
+    # Set up API kwargs
+    inference_config = {
+        "maxTokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    # Update with additional kwargs if provided
+    if model_api_kwargs is not None:
+        if 'max_tokens' in model_api_kwargs:
+            inference_config['maxTokens'] = model_api_kwargs['max_tokens']
+        if 'temperature' in model_api_kwargs:
+            inference_config['temperature'] = model_api_kwargs['temperature']
+
+
+    # Make the API call
+    response = brt.converse(
+        modelId=model,
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
+        inferenceConfig=inference_config,
+    )
+
+    if response is None:
+        raise Exception("No response returned from AWS Bedrock")
+
+    output = response["output"]["message"]["content"][0]["text"]
+    num_tokens = response["usage"]["outputTokens"]
+
+    return output, num_tokens
+
+
+incremental_wait = wait_incrementing(start=API_RETRY_SLEEP_MIN, max=API_RETRY_SLEEP_MAX, increment=20)
+
+def gemini_custom_wait(retry_state):
+    if retry_state.outcome.failed:
+        exception = retry_state.outcome.exception()
+        if exception and "RECITATION" in str(exception) or "MAX_TOKENS" in str(exception):
+            return 0.0  # don't wait for recitation or max token errors
+
+    val = incremental_wait(retry_state)
+    print(f"Waiting for {val} seconds before retrying attempt {retry_state.attempt_number + 1}")
+
+    # other errors might indicate rate limiting, wait for these
+    return val
+
+GEMINI_REST_BASE = "https://generativelanguage.googleapis.com/v1beta"
+# Each chunk is capped server-side (32768 tokens non-streaming), so 40 chunks
+# covers a full 1M-token output window.
+GEMINI_MAX_CHUNKS = 40
+GEMINI_CHUNK_ATTEMPTS = 6
+
+
+def _gemini_camel(key: str) -> str:
+    head, *rest = key.split('_')
+    return head + ''.join(part.title() for part in rest)
+
+
+def _gemini_rest_post(url: str, api_key: str, body: dict) -> dict:
+    """POST one generateContent chunk, retrying rate limits / 5xx / dropped connections
+    per chunk so a transient error doesn't throw away the chunks already generated."""
+    for attempt in range(1, GEMINI_CHUNK_ATTEMPTS + 1):
+        try:
+            r = httpx.post(url, headers={'x-goog-api-key': api_key}, json=body,
+                           timeout=httpx.Timeout(timeout=900.0, connect=10.0))
+        except httpx.TransportError as e:
+            if attempt == GEMINI_CHUNK_ATTEMPTS:
+                raise
+            logger.warning(f"gemini chunk transport error (attempt {attempt}/{GEMINI_CHUNK_ATTEMPTS}): {e}")
+            time.sleep(15 * attempt)
+            continue
+        if r.status_code == 429 or r.status_code >= 500:
+            if attempt == GEMINI_CHUNK_ATTEMPTS:
+                raise Exception(f"Gemini HTTP {r.status_code}: {r.text[:500]}")
+            logger.warning(f"gemini chunk HTTP {r.status_code} (attempt {attempt}/{GEMINI_CHUNK_ATTEMPTS}), sleeping {30 * attempt}s")
+            time.sleep(30 * attempt)
+            continue
+        if r.status_code != 200:
+            raise Exception(f"Gemini HTTP {r.status_code}: {r.text[:500]}")
+        return r.json()
+    raise Exception("unreachable")
+
+
+def chat_completion_gemini_continuation(
+    model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False
+) -> tuple[str, int, dict[str, Any] | None]:
+    """Gemini REST generateContent that follows finishReason=CONTINUATION.
+
+    Long generations come back in capped chunks: the server ends a chunk with
+    finishReason CONTINUATION plus a continuationToken, and resending the same
+    request with that token resumes the same generation. litellm maps the unknown
+    finish reason to 'stop' and drops the token, so a cut mid-thinking surfaced as
+    'No message returned' and a cut mid-answer was scored as a complete answer.
+    Opt in per model with api_kwargs gemini_continuation: true."""
+    kwargs = dict(model_api_kwargs or {})
+    kwargs.pop('gemini_continuation', None)
+    api_key = (api_dict or {}).get('api_key') or os.environ["GEMINI_API_KEY"]
+
+    generation_config: dict[str, Any] = {
+        'temperature': temperature,
+        'maxOutputTokens': kwargs.pop('max_output_tokens', None) or kwargs.pop('max_tokens', None) or max_tokens,
+    }
+    thinking = kwargs.pop('thinking_config', None)
+    if thinking:
+        generation_config['thinkingConfig'] = {_gemini_camel(k): v for k, v in thinking.items()}
+    generation_config.update({_gemini_camel(k): v for k, v in kwargs.items() if v is not None})
+
+    body: dict[str, Any] = {
+        'contents': [{'role': 'model' if m['role'] == 'assistant' else 'user', 'parts': [{'text': m['content']}]}
+                     for m in messages if m['role'] != 'system'],
+        'generationConfig': generation_config,
+    }
+    system = [m['content'] for m in messages if m['role'] == 'system']
+    if system:
+        body['systemInstruction'] = {'parts': [{'text': system[0]}]}
+
+    url = f"{GEMINI_REST_BASE}/models/{model}:generateContent"
+    text_parts: list[str] = []
+    output_tokens = input_tokens = cached_tokens = 0
+    chunks = 0
+    finish_reason = None
+    while True:
+        response = _gemini_rest_post(url, api_key, body)
+        chunks += 1
+        usage = response.get('usageMetadata') or {}
+        # each continuation re-reads the prompt plus everything generated so far (mostly cached)
+        input_tokens += usage.get('promptTokenCount') or 0
+        cached_tokens += usage.get('cachedContentTokenCount') or 0
+        output_tokens += (usage.get('candidatesTokenCount') or 0) + (usage.get('thoughtsTokenCount') or 0)
+        candidates = response.get('candidates') or []
+        if not candidates:
+            block = (response.get('promptFeedback') or {}).get('blockReason')
+            raise Exception(f"No candidates returned from Gemini (blockReason={block})")
+        candidate = candidates[0]
+        finish_reason = candidate.get('finishReason')
+        text_parts += [p['text'] for p in (candidate.get('content') or {}).get('parts', [])
+                       if p.get('text') and not p.get('thought')]
+        if finish_reason != 'CONTINUATION':
+            break
+        if chunks >= GEMINI_MAX_CHUNKS:
+            raise Exception(f"Gemini still continuing after {chunks} chunks")
+        body['continuationToken'] = candidate['continuationToken']
+
+    message = ''.join(text_parts)
+    metadata: dict[str, Any] = {'input_tokens': input_tokens, 'cached_tokens': cached_tokens,
+                                'continuation_chunks': chunks}
+    if not message:
+        if finish_reason == 'MAX_TOKENS':
+            logger.warning(f"Token exhaustion: model used all tokens ({output_tokens}), no content produced")
+            metadata['eval_status'] = 'token_exhaustion'
+            return '', output_tokens, metadata
+        raise Exception(f"No message returned from Gemini (finishReason={finish_reason}, chunks={chunks})")
+    return message, output_tokens, metadata
+
+
+@retry(
+    stop=stop_after_attempt(API_MAX_RETRY),
+    wait=gemini_custom_wait,
+    retry=retry_if_exception_type(Exception),
+    after=retry_log,
+    retry_error_callback=retry_fail
+)
+def chat_completion_google_generativeai(
+    model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False
+) -> tuple[str, int, dict[str, Any] | None]:
+    if (model_api_kwargs or {}).get('gemini_continuation'):
+        return chat_completion_gemini_continuation(model, messages, temperature, max_tokens, model_api_kwargs, api_dict, stream)
+    from google import genai
+    from google.genai import types
+
+    if api_dict is not None and "api_key" in api_dict:
+        api_key = api_dict["api_key"]
+    else:
+        api_key = os.environ["GEMINI_API_KEY"]
+
+    client = genai.Client(api_key=api_key)
+
+    if any(message['role'] == 'system' for message in messages):
+        system = [types.Part.from_text(text=message['content']) for message in messages if message['role'] == "system"][0]
+    else:
+        system = None
+    messages: list[types.Content] = [types.Content(role=message['role'], parts=[types.Part.from_text(text=message['content'])]) for message in messages if message['role'] != 'system']
+
+    safety_settings = [
+        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold=types.HarmBlockThreshold.BLOCK_NONE),
+    ]
+
+    # Initialize with default kwargs and safety settings
+    api_kwargs: API_Kwargs = {
+        'safety_settings': safety_settings,
+        'system_instruction': system,
+        'temperature': temperature,
+        'max_output_tokens': max_tokens
+    }
+
+    # Update with additional kwargs if provided
+    if model_api_kwargs is not None:
+        model_api_kwargs = {key: value for key, value in model_api_kwargs.items()}
+        api_kwargs.update(model_api_kwargs)
+
+    config = types.GenerateContentConfig(**api_kwargs)
+
+    response = client.models.generate_content(
+        model=model,
+        contents=messages,
+        config=config
+    )
+
+    if response is None or response.text is None:
+        raise Exception("No response returned from Google")
+
+    message = response.text
+
+    num_tokens = None
+    input_tokens = None
+    cached_tokens = None
+    if response.usage_metadata is not None:
+        num_tokens = response.usage_metadata.candidates_token_count
+        if response.usage_metadata.thoughts_token_count is not None:
+            num_tokens += response.usage_metadata.thoughts_token_count
+        input_tokens = response.usage_metadata.prompt_token_count
+        cached_tokens = response.usage_metadata.cached_content_token_count
+
+    if num_tokens is None:
+        num_tokens = -1
+
+    metadata: dict[str, Any] | None = None
+    if input_tokens is not None:
+        metadata = {'input_tokens': input_tokens}
+        if cached_tokens is not None:
+            metadata['cached_tokens'] = cached_tokens
+
+    return message, num_tokens, metadata
+
+
+@retry(
+    stop=stop_after_attempt(API_MAX_RETRY),
+    wait=wait_fixed(API_RETRY_SLEEP_MIN),
+    retry=retry_if_exception_type(Exception),
+    after=retry_log,
+    retry_error_callback=retry_fail
+)
+def chat_completion_together(model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False) -> tuple[str, int]:
+    from together import Together
+
+    if api_dict is not None and "api_key" in api_dict:
+        api_key = api_dict["api_key"]
+    else:
+        api_key = os.environ["TOGETHER_API_KEY"]
+    client = Together(api_key=api_key)
+
+
+    messages = [message for message in messages if message['role'] == 'user']
+
+    api_kwargs: API_Kwargs = {'max_tokens': max_tokens, 'temperature': temperature}
+    if model_api_kwargs is not None:
+        model_api_kwargs = {key: value for key, value in model_api_kwargs.items()}
+        api_kwargs.update(model_api_kwargs)
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        **api_kwargs
+    )
+
+    if response is None:
+        raise Exception("No response returned from Together AI")
+    elif response.choices is None:
+        raise Exception("No choices returned from Together AI")
+
+    message = response.choices[0].message.content
+    if message is None:
+        raise Exception("No message returned from Together AI")
+
+    num_tokens = response.usage.completion_tokens if hasattr(response, 'usage') and hasattr(response.usage, 'completion_tokens') else None
+
+    return message, num_tokens
+
+
+@retry(
+    stop=stop_after_attempt(API_MAX_RETRY),
+    wait=wait_fixed(API_RETRY_SLEEP_MIN),
+    retry=retry_if_exception_type(Exception),
+    after=retry_log,
+    retry_error_callback=retry_fail
+)
+def chat_completion_anthropic(model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False) -> tuple[str, int]:
+    if api_dict is not None and "api_key" in api_dict:
+        api_key = api_dict["api_key"]
+    else:
+        api_key = anthropic_api_key(model)
+
+    from anthropic import NOT_GIVEN, Anthropic
+    c = Anthropic(api_key=api_key)
+
+    api_kwargs: API_Kwargs = {
+        'max_tokens': max_tokens,
+        'temperature': temperature
+    }
+
+
+    if model_api_kwargs is not None:
+        model_api_kwargs = {key: value for key, value in model_api_kwargs.items()}
+        api_kwargs.update(model_api_kwargs)
+
+    actual_api_kwargs = {key: (value if value is not None else NOT_GIVEN) for key, value in api_kwargs.items()}
+    # client.messages.stream() streams intrinsically; a leftover litellm `stream` kwarg would TypeError.
+    actual_api_kwargs.pop('stream', None)
+    actual_api_kwargs.pop('stream_options', None)
+
+    system = [message for message in messages if message['role'] == 'system']
+    if len(system) > 0:
+        system_message = system[0]['content']
+    else:
+        system_message = None
+
+    messages = [message for message in messages if message['role'] != 'system']
+
+    message = []
+
+    client = c
+    _thinking_cfg = actual_api_kwargs.get('thinking') or {}
+    _needs_beta = bool(actual_api_kwargs.get('betas', [])) or (
+        isinstance(_thinking_cfg, dict) and _thinking_cfg.get('type') in ('auto', 'adaptive')
+    )
+    if _needs_beta:
+        client = c.beta
+
+    with client.messages.stream(
+        model=model,
+        messages=messages,
+        system=system_message if system_message else NOT_GIVEN,
+        **actual_api_kwargs
+    ) as stream:
+        new_block = {}
+        fallback_model = None
+        for event in stream:
+            if event.type == 'content_block_start':
+                new_block = {}
+                if event.content_block.type == 'redacted_thinking':
+                    new_block['type'] = 'redacted_thinking'
+                    new_block['data'] = event.content_block.data
+                elif event.content_block.type == 'thinking':
+                    new_block['type'] = 'thinking'
+                elif event.content_block.type == 'text':
+                    new_block['type'] = 'text'
+                else:
+                    # Unknown block type — e.g. 'fallback' from the
+                    # server-side-fallback beta, which announces the model that
+                    # actually served the request. Track the type so the
+                    # delta/stop events for this block don't crash the stream.
+                    new_block['type'] = event.content_block.type
+                    if event.content_block.type == 'fallback':
+                        fallback_model = getattr(event.content_block, 'model', None) or 'unknown'
+            elif event.type == 'content_block_delta':
+                if not new_block.get('type'):
+                    continue
+                if event.delta.type == 'text_delta':
+                    if 'text' not in new_block:
+                        new_block['text'] = ''
+                    new_block['text'] += event.delta.text
+                elif event.delta.type == 'thinking_delta':
+                    if 'thinking' not in new_block:
+                        new_block['thinking'] = ''
+                    new_block['thinking'] += event.delta.thinking
+                elif event.delta.type == 'signature_delta':
+                    new_block['signature'] = event.delta.signature
+            elif event.type == 'content_block_stop':
+                # Only answer content goes into the message; metadata-only
+                # blocks (like 'fallback') were captured above.
+                if new_block.get('type') in ('text', 'thinking', 'redacted_thinking'):
+                    for content in new_block:
+                        if isinstance(new_block[content], str):
+                            new_block[content] = new_block[content].strip()
+                    message.append(new_block)
+                new_block = {}
+
+    del actual_api_kwargs['max_tokens']
+    del actual_api_kwargs['temperature']
+
+    # The stream's final message carries exact usage (input from message_start,
+    # output from the final message_delta) — no extra API call needed.
+    final_usage = None
+    try:
+        final_message = stream.get_final_message()
+        stop_reason = final_message.stop_reason or 'unknown'
+        final_usage = final_message.usage
+    except Exception:
+        stop_reason = 'unknown'
+
+    text_messages = [c for c in message if c['type'] == 'text' and c.get('text', '').strip()]
+    if len(text_messages) == 0:
+        block_types = [c['type'] for c in message]
+        if stop_reason == 'max_tokens':
+            # Token exhaustion: the entire max_tokens budget went to the thinking
+            # block, leaving no final answer. Match the litellm path -- record an
+            # empty answer + eval_status so it grades as a genuine 0 (a real model
+            # failure), not a hard infra $ERROR$. Do NOT retry-chase token limits.
+            _md: dict[str, Any] = {'eval_status': 'token_exhaustion'}
+            _out = -1
+            if fallback_model:
+                _md['fallback_model'] = fallback_model
+            if final_usage is not None:
+                _out = final_usage.output_tokens
+                _md['input_tokens'] = final_usage.input_tokens
+                _cr = getattr(final_usage, 'cache_read_input_tokens', None)
+                if _cr is not None:
+                    _md['cached_tokens'] = _cr
+                _cc = getattr(final_usage, 'cache_creation_input_tokens', None)
+                if _cc is not None:
+                    _md['cache_creation'] = _cc
+            return "", _out, _md
+        raise Exception(f"No response from Anthropic (stop_reason={stop_reason}, blocks={block_types})")
+
+    message_text = text_messages[0]['text']
+
+    if final_usage is not None:
+        tokens = final_usage.output_tokens
+        metadata: dict[str, Any] = {'input_tokens': final_usage.input_tokens}
+        if fallback_model:
+            metadata['fallback_model'] = fallback_model
+        cached_tokens = getattr(final_usage, 'cache_read_input_tokens', None)
+        if cached_tokens is not None:
+            metadata['cached_tokens'] = cached_tokens
+        cache_creation = getattr(final_usage, 'cache_creation_input_tokens', None)
+        if cache_creation is not None:
+            metadata['cache_creation'] = cache_creation
+        return message_text, tokens, metadata
+
+    # Fallback when usage is unavailable: approximate output tokens via count_tokens
+    message_for_counting = [c for c in message if (c['type'] != 'text' or c.get('text', '').strip()) and (c['type'] != 'thinking' or c.get('thinking', '').strip())]
+    try:
+        tokens = client.messages.count_tokens(
+            model=model,
+            messages=[
+                {"role": "assistant", "content": message_for_counting}
+            ],
+            **actual_api_kwargs
+        ).input_tokens
+    except Exception as e:
+        print('Failed to count tokens:', e)
+        traceback.print_exc()
+        tokens = -1
+
+    return message_text, tokens, {'fallback_model': fallback_model} if fallback_model else None
+
+
+def chat_completion_mistral(model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False) -> tuple[str, int, dict[str, Any] | None]:
+    # Mistral's chat API is OpenAI-compatible, so it shares chat_completion_openai (usage,
+    # cached tokens, reasoning capture) instead of the mistralai SDK, which the eval venv
+    # does not ship (retries come from chat_completion_openai). Reasoning (reasoning_effort in api_kwargs) comes back as content
+    # chunk lists; _split_content_chunks routes the thinking to metadata['reasoning_content'].
+    api_dict = {
+        'api_key': (api_dict or {}).get('api_key') or os.environ['MISTRAL_API_KEY'],
+        'api_base': (api_dict or {}).get('api_base') or 'https://api.mistral.ai/v1',
+    }
+    return chat_completion_openai(model, messages, temperature, max_tokens, model_api_kwargs, api_dict, stream)
+
+
+@retry(
+    stop=stop_after_attempt(API_MAX_RETRY),
+    wait=wait_fixed(API_RETRY_SLEEP_MIN),
+    retry=retry_if_exception_type(Exception),
+    after=retry_log,
+    retry_error_callback=retry_fail
+)
+def individual_completion_deepinfra(client, model, messages, ai_message, actual_api_kwargs):
+    actual_messages = messages + [ai_message] if ai_message else messages
+    response = client.chat.completions.create(
+        model=model,
+        messages=actual_messages,
+        stream=False,
+        **actual_api_kwargs
+    )
+
+    if response is None:
+        raise Exception("No response returned from DeepInfra")
+    elif response.choices is None or len(response.choices) == 0:
+        print(response)
+        raise Exception("No choices returned from DeepInfra")
+    elif response.choices[0].message is None or response.choices[0].message.content is None:
+        print(response)
+        raise Exception("No message returned from DeepInfra")
+
+    return response
+
+
+def chat_completion_deepinfra(model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False) -> tuple[str, int]:
+    from openai import NOT_GIVEN, OpenAI
+
+    if api_dict is not None and "api_key" in api_dict:
+        api_key = api_dict["api_key"]
+    else:
+        api_key = os.environ["DEEPINFRA_API_KEY"]
+
+    client = OpenAI(api_key=api_key, base_url="https://api.deepinfra.com/v1/openai", timeout=httpx.Timeout(timeout=TIMEOUT, connect=10.0))
+
+    api_kwargs: API_Kwargs = {
+        'max_tokens': max_tokens,
+        'temperature': temperature
+    }
+
+    if model_api_kwargs is not None:
+        model_api_kwargs = {key: value for key, value in model_api_kwargs.items()}
+        api_kwargs.update(model_api_kwargs)
+
+    actual_api_kwargs = {key: (value if value is not None else NOT_GIVEN) for key, value in api_kwargs.items()}
+
+    ai_message = None
+    total_tokens = 0
+    # DeepInfra hard caps at 16384 tokens in a single request
+    # so we need to resubmit the request until we get a 'stop' finish reason
+    # or reach our actual max tokens
+    while total_tokens < actual_api_kwargs['max_tokens']:
+        actual_api_kwargs['max_tokens'] = actual_api_kwargs['max_tokens'] - total_tokens
+
+        response = individual_completion_deepinfra(client, model, messages, ai_message, actual_api_kwargs)
+        if ai_message is None:
+            ai_message = {'role': 'assistant', 'content': ''}
+        ai_message['content'] += response.choices[0].message.content
+        total_tokens += cast(int, response.usage.completion_tokens)
+
+        if response.choices[0].finish_reason != 'length':
+            break
+        elif total_tokens < actual_api_kwargs['max_tokens']:
+            print(f"Continuing DeepInfra request for more tokens, have {total_tokens} and requested {actual_api_kwargs['max_tokens']}")
+
+    return ai_message['content'], total_tokens
+
+@retry(
+    stop=stop_after_attempt(API_MAX_RETRY),
+    wait=wait_fixed(API_RETRY_SLEEP_MIN),
+    retry=retry_if_exception_type(Exception),
+    after=retry_log,
+    retry_error_callback=retry_fail
+)
+def chat_completion_litellm(
+    model: str, messages: Conversation, temperature: float, max_tokens: int, model_api_kwargs: API_Kwargs | None = None, api_dict: dict[str, str] | None = None, stream: bool = False, provider: str | None = None
+) -> tuple[str, int, dict[str, Any] | None]:
+    """Provider-agnostic path via LiteLLM, selected by the --use-litellm flag."""
+    import litellm
+    # Anthropic server-side fallback isn't expressible through litellm: it reserves
+    # `fallbacks` for its own client-side model-retry (a string like "default" crashes it,
+    # a list is misrouted) and its transform overwrites the anthropic-beta header. Use the
+    # native Anthropic path, which forwards `fallbacks` + betas to the request body intact.
+    if provider == 'anthropic' and (model_api_kwargs or {}).get('extra_body', {}).get('fallbacks') is not None:
+        return chat_completion_anthropic(model, messages, temperature, max_tokens, model_api_kwargs, api_dict, stream)
+    # litellm drops Gemini's continuationToken (see chat_completion_gemini_continuation)
+    if provider == 'google' and (model_api_kwargs or {}).get('gemini_continuation'):
+        return chat_completion_gemini_continuation(model, messages, temperature, max_tokens, model_api_kwargs, api_dict, stream)
+    # Anthropic long-stream reliability: litellm's default aiohttp transport drops
+    # multi-minute streams; force httpx (what the native SDK uses).
+    litellm.disable_aiohttp_transport = True
+    # Streamed error paths leak httpx pool slots (a stream that errors or times
+    # out untended never returns its connection to the pool); at httpx's default
+    # ceiling (max_connections=100) the shared module_level_client eventually
+    # wedges every worker in httpcore wait_for_connection with zero sockets open.
+    # HTTPHandler's `concurrent_limit` kwarg is IGNORED by litellm ("kept for
+    # backward compatibility"), so the ceiling must be raised by handing it an
+    # httpx.Client with explicit limits.
+    if not getattr(litellm.module_level_client, '_livebench_pool_bumped', False):
+        from litellm.llms.custom_httpx.http_handler import HTTPHandler
+        _big_pool_client = HTTPHandler(client=httpx.Client(
+            limits=httpx.Limits(max_connections=4000, max_keepalive_connections=100),
+            timeout=httpx.Timeout(timeout=TIMEOUT, connect=10.0),
+            follow_redirects=True,
+        ))
+        _big_pool_client._livebench_pool_bumped = True  # type: ignore[attr-defined]
+        litellm.module_level_client = _big_pool_client
+
+    api_kwargs: API_Kwargs = {
+        'temperature': temperature
+    }
+
+    if model_api_kwargs is not None:
+        model_api_kwargs = {key: value for key, value in model_api_kwargs.items()}
+        api_kwargs.update(model_api_kwargs)
+
+    if 'max_tokens' not in api_kwargs and 'max_completion_tokens' not in api_kwargs and 'max_output_tokens' not in api_kwargs:
+        api_kwargs['max_tokens'] = max_tokens
+
+    if 'stream' in api_kwargs:
+        stream = bool(api_kwargs['stream'])
+        del api_kwargs['stream']
+    else:
+        # Stream by default so the timeout bounds chunk gaps, not total generation time
+        stream = True
+
+    actual_api_kwargs = {key: value for key, value in api_kwargs.items() if value is not None}
+
+    # LiveBench provider names → LiteLLM prefixes ('<provider>/responses' = Responses-API bridge)
+    litellm_provider_aliases = {'google': 'gemini', 'together': 'together_ai'}
+    litellm_provider_aliases.update({name: f'{litellm_name}/responses' for name, litellm_name in RESPONSES_API_PROVIDERS.items()})
+
+    if api_dict is not None and api_dict.get('api_base'):
+        # honor the responses-API bridge for non-openai endpoints (provider=openai_responses)
+        litellm_model = f"{litellm_provider_aliases.get(provider, 'openai')}/{model}"
+        actual_api_kwargs['api_base'] = api_dict['api_base']
+        if api_dict.get('api_key'):
+            actual_api_kwargs['api_key'] = api_dict['api_key']
+    elif provider and provider not in ('local', ''):
+        litellm_model = f"{litellm_provider_aliases.get(provider, provider)}/{model}"
+    else:
+        litellm_model = model
+
+    # Provider-native params must be listed in allowed_openai_params for
+    # LiteLLM to forward them to the API untouched.
+    def passthrough(*params: str) -> None:
+        present = [p for p in params if p in actual_api_kwargs]
+        if present:
+            existing = actual_api_kwargs.get('allowed_openai_params') or []
+            actual_api_kwargs['allowed_openai_params'] = list(existing) + present
+
+    if 'deepseek' in litellm_model:
+        # DeepSeek's API rejects the system role
+        messages = [{**m, 'role': 'user'} if m.get('role') == 'system' else m for m in messages]
+
+    if 'anthropic' in litellm_model:
+        actual_api_kwargs.setdefault('api_key', anthropic_api_key(model))
+        if 'betas' in actual_api_kwargs:
+            actual_api_kwargs['extra_headers'] = {'anthropic-beta': ','.join(actual_api_kwargs.pop('betas'))}
+        if 'extra_body' in actual_api_kwargs:
+            actual_api_kwargs = actual_api_kwargs | actual_api_kwargs.pop('extra_body')
+        if 'thinking' not in actual_api_kwargs:
+            actual_api_kwargs['thinking'] = {'type': 'disabled'}
+        elif actual_api_kwargs['thinking'].get('type') == 'auto':
+            # 'auto' is the beta-client spelling; the standard endpoint only accepts 'adaptive'
+            actual_api_kwargs['thinking'] = {**actual_api_kwargs['thinking'], 'type': 'adaptive'}
+        # litellm gates output_config.effort against a per-model capability map, so EAP/codename
+        # models it doesn't know (e.g. claude-snickerdoodle-eap) get xhigh/max rejected client-side
+        # even when the API accepts them. Register the requested effort as supported for this model.
+        effort = (actual_api_kwargs.get('output_config') or {}).get('effort')
+        if effort:
+            litellm.register_model({model: {
+                'litellm_provider': 'anthropic',
+                'supports_reasoning': True,
+                f'supports_{effort}_reasoning_effort': True,
+            }})
+        passthrough('thinking', 'output_config')
+    else:
+        passthrough('reasoning_effort')
+        if litellm_model.startswith('gemini/'):
+            passthrough('thinking_config')
+        elif '/responses/' in litellm_model:
+            passthrough('reasoning')
+            # litellm fakes streaming (one non-streaming request replayed as chunks) for any
+            # Responses-API model missing from its model map, i.e. every non-OpenAI endpoint
+            # bridged here. Long generations then hit the provider's non-streaming time limit
+            # (Meta: gateway_timeout), and `timeout` bounds the whole generation, not chunk gaps.
+            if stream:
+                litellm.register_model({model: {'litellm_provider': 'openai', 'supports_native_streaming': True}})
+
+    if stream and 'stream_options' not in actual_api_kwargs:
+        actual_api_kwargs['stream_options'] = {'include_usage': True}
+
+    timeout = actual_api_kwargs.pop('timeout', 600)
+
+    _TRANSIENT_STREAM_ERRS = (
+        'peer closed connection', 'incomplete chunked read', 'apiconnectionerror',
+        'midstreamfallback', 'connection error', 'connection reset', 'connection aborted',
+        'server disconnected', 'timed out', 'timeout',
+    )
+    _MAX_ATTEMPTS = 3
+
+    def _do_litellm_call(use_stream):
+        # Anthropic-routed calls get a PER-CALL httpx client: the shared sync pool
+        # deadlocks under concurrent stream closes — httpcore's PoolByteStream.close()
+        # takes the pool lock while litellm's "streaming-error-body-read" helper
+        # threads and connection-assignment events contend for it (observed as 99
+        # threads parked in connection_pool.handle_request + 22 in close during a
+        # 429 storm). A private client makes every close local to one call; the
+        # extra TLS handshake is noise next to minutes-long generations.
+        _call_client = None
+        _call_kwargs = actual_api_kwargs
+        if 'anthropic' in litellm_model and 'client' not in actual_api_kwargs:
+            from litellm.llms.custom_httpx.http_handler import HTTPHandler
+            _call_client = HTTPHandler(client=httpx.Client(
+                timeout=httpx.Timeout(timeout=TIMEOUT, connect=10.0),
+                follow_redirects=True,
+            ))
+            _call_kwargs = {**actual_api_kwargs, 'client': _call_client}
+        try:
+            resp = litellm.completion(
+                model=litellm_model, messages=messages, stream=use_stream, timeout=timeout,
+                num_retries=3, **_call_kwargs
+            )
+            if use_stream:
+                # Consume the stream HERE so a mid-stream connection drop is caught and retryable.
+                chunks = list(resp)
+                last_usage = None
+                for chunk in reversed(chunks):
+                    if hasattr(chunk, 'usage') and chunk.usage is not None:
+                        last_usage = chunk.usage
+                        break
+                resp = litellm.stream_chunk_builder(chunks, messages=messages)
+                if resp.usage is not None and last_usage is not None:
+                    if not resp.usage.prompt_tokens and getattr(last_usage, 'prompt_tokens', None):
+                        resp.usage.prompt_tokens = last_usage.prompt_tokens
+                resp._livebench_provider_total_tokens = litellm_stream_provider_total(chunks)
+            return resp
+        finally:
+            if _call_client is not None:
+                try:
+                    _call_client.client.close()
+                except Exception:
+                    pass
+
+    response = None
+    for _attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            response = _do_litellm_call(stream)
+            break
+        except Exception as e:
+            err = str(e).lower()
+            # Provider rejects streaming outright -> permanently fall back to non-streaming.
+            if stream and 'stream' in err and any(s in err for s in ('support', 'invalid', 'not allowed', 'verified')):
+                logger.warning(f"{litellm_model} rejected streaming, retrying non-streaming: {e}")
+                stream = False
+                actual_api_kwargs.pop('stream_options', None)
+                continue
+            # Upstream rate limit (e.g. OpenRouter "temporarily rate-limited upstream",
+            # limit_source=upstream_provider_shared_pool) -> back off and retry. litellm's own
+            # num_retries fires within seconds, which is useless against a shared pool that
+            # needs tens of seconds to drain; without this, a 429 burst turned 25 in-flight
+            # union-alpha questions into $ERROR$ rows at once (2026-09-16).
+            if _attempt < _MAX_ATTEMPTS and ('429' in err or 'rate limit' in err or 'rate-limit' in err or 'ratelimit' in err):
+                _wait = 30 * _attempt
+                logger.warning(f"{litellm_model} rate limited (attempt {_attempt}/{_MAX_ATTEMPTS}), sleeping {_wait}s: {e}")
+                time.sleep(_wait)
+                continue
+            # Transient network / mid-stream drop -> retry the whole call.
+            if _attempt < _MAX_ATTEMPTS and any(s in err for s in _TRANSIENT_STREAM_ERRS):
+                logger.warning(f"{litellm_model} transient stream error (attempt {_attempt}/{_MAX_ATTEMPTS}), retrying: {e}")
+                continue
+            raise
+
+    message = response.choices[0].message.content
+    finish_reason = response.choices[0].finish_reason
+    reasoning_content = getattr(response.choices[0].message, 'reasoning_content', None)
+
+    num_tokens = None
+    input_tokens = None
+    cached_tokens = None
+    token_exhaustion = False
+    if response.usage is not None:
+        # Reasoning is added only where the provider bills it outside completion_tokens (xAI:
+        # grok-4.5 completion=1015 + reasoning=1935); elsewhere it is already included and
+        # adding it double-counts. See billed_output_tokens.
+        num_tokens = billed_output_tokens(response.usage, getattr(response, '_livebench_provider_total_tokens', None))
+        input_tokens = response.usage.prompt_tokens
+        cached_tokens = getattr(response.usage, 'cache_read_input_tokens', None) or 0
+        if not cached_tokens and hasattr(response.usage, 'prompt_tokens_details') and response.usage.prompt_tokens_details is not None:
+            cached_tokens = response.usage.prompt_tokens_details.cached_tokens or 0
+
+    if message is None or message == '':
+        if finish_reason == 'length':
+            # finish_reason=length + empty content = token exhaustion, regardless of whether
+            # litellm surfaced reasoning_content (it often doesn't for Anthropic thinking).
+            logger.warning(f"Token exhaustion: model used all tokens ({num_tokens}), no content produced")
+            message = ""
+            token_exhaustion = True
+        else:
+            raise Exception(f"No message returned from litellm (finish_reason={finish_reason})")
+    if num_tokens is None:
+        num_tokens = -1
+
+    metadata: dict[str, Any] | None = None
+    if input_tokens is not None:
+        metadata = {'input_tokens': input_tokens}
+        if cached_tokens is not None:
+            metadata['cached_tokens'] = cached_tokens
+
+    if token_exhaustion:
+        if metadata is None:
+            metadata = {}
+        metadata['eval_status'] = 'token_exhaustion'
+
+    if reasoning_content:
+        metadata = metadata if metadata is not None else {}
+        metadata['reasoning_content'] = reasoning_content
+
+    return message, num_tokens, metadata
+
+
+def get_api_function(provider_name: str, use_litellm: bool = False) -> ModelAPI:
+    if use_litellm:
+        from functools import partial
+        return partial(chat_completion_litellm, provider=provider_name)
+    if provider_name == 'openai':
+        return chat_completion_openai
+    elif provider_name == 'openai_responses':
+        return chat_completion_openai_responses
+    elif provider_name == 'anthropic':
+        return chat_completion_anthropic
+    elif provider_name == 'mistral':
+        return chat_completion_mistral
+    elif provider_name == 'together':
+        return chat_completion_together
+    elif provider_name == 'google':
+        return chat_completion_google_generativeai
+    elif provider_name == 'aws':
+        return chat_completion_aws
+    elif provider_name == 'deepinfra':
+        return chat_completion_deepinfra
+    else:
+        return chat_completion_openai

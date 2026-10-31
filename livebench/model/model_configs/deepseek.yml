@@ -1,0 +1,417 @@
+# Deepseek Models
+---
+display_name: deepseek-r1
+api_name:
+  https://api.deepseek.com: deepseek-reasoner
+  together: deepseek-ai/DeepSeek-R1
+default_provider: together
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.7
+    max_tokens: 64000
+    top_p: 0.95
+  https://api.deepseek.com:
+    temperature: null
+    max_tokens: null
+---
+display_name: deepseek-v3-0324
+api_name:
+  https://api.deepseek.com: deepseek-chat
+  together: deepseek-ai/deepseek-v3
+default_provider: together
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+---
+display_name: deepseek-r1-distill-llama-70b
+api_name:
+  together: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+  deepinfra: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+default_provider: deepinfra
+api_kwargs:
+  default:
+    temperature: 0.7
+    top_p: 0.95
+    max_tokens: 64000
+---
+display_name: deepseek-r1-distill-qwen-32b
+api_name:
+  local: DeepSeek-R1-Distill-Qwen-32B
+  deepinfra: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+default_provider: deepinfra
+api_kwargs:
+  default:
+    temperature: 0.7
+    max_tokens: 64000
+    top_p: 0.95
+---
+display_name: deepseek-r1-0528
+api_name:
+  local: DeepSeek-R1
+  https://api.hyperbolic.xyz/v1: deepseek-ai/DeepSeek-R1-0528
+  deepinfra: deepseek-ai/DeepSeek-R1-0528
+  https://api.novita.ai/openai: deepseek/deepseek-r1-0528
+  https://openrouter.ai/api/v1: deepseek/deepseek-r1-0528
+default_provider: https://openrouter.ai/api/v1
+api_keys:
+  https://api.hyperbolic.xyz/v1: HYPERBOLIC_API_KEY
+  https://api.novita.ai/openai: NOVITA_API_KEY
+  https://openrouter.ai/api/v1: OPENROUTER_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.7
+    max_tokens: 64000
+  https://api.novita.ai/openai:
+    max_tokens: 32768
+  https://openrouter.ai/api/v1:
+    max_tokens: 32768
+    provider:
+      quantizations:
+        - fp8
+        - fp16
+      require_parameters: true
+      sort: throughput
+---
+display_name: deepseek-v3.1
+api_name:
+  https://api.deepseek.com: deepseek-chat
+  https://openrouter.ai/api/v1: deepseek/deepseek-chat-v3.1
+default_provider: https://openrouter.ai/api/v1
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+  https://openrouter.ai/api/v1: OPENROUTER_API_KEY
+---
+display_name: deepseek-v3.1-thinking
+api_name:
+  https://api.deepseek.com: deepseek-reasoner
+  https://openrouter.ai/api/v1: deepseek/deepseek-chat-v3.1
+default_provider: https://openrouter.ai/api/v1
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+  https://openrouter.ai/api/v1: OPENROUTER_API_KEY
+api_kwargs:
+  default:
+    max_tokens: 64000
+    temperature: 1.0
+  https://openrouter.ai/api/v1:
+    reasoning_effort: "high"
+---
+display_name: deepseek-v3.1-terminus
+api_name:
+  https://api.deepseek.com: deepseek-chat
+  https://openrouter.ai/api/v1: deepseek/deepseek-v3.1-terminus
+default_provider: https://openrouter.ai/api/v1
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+  https://openrouter.ai/api/v1: OPENROUTER_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.7
+---
+display_name: deepseek-v3.1-terminus-thinking
+api_name:
+  https://api.deepseek.com: deepseek-reasoner
+  https://openrouter.ai/api/v1: deepseek/deepseek-v3.1-terminus
+default_provider: https://openrouter.ai/api/v1
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+  https://openrouter.ai/api/v1: OPENROUTER_API_KEY
+api_kwargs:
+  default:
+    max_tokens: 64000
+    temperature: 1.0
+  https://openrouter.ai/api/v1:
+    reasoning_effort: "high"
+---
+display_name: deepseek-v3.2-exp
+api_name:
+  https://api.deepseek.com: deepseek-chat
+default_provider: https://api.deepseek.com
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.7
+---
+display_name: deepseek-v3.2-exp-thinking
+api_name:
+  https://api.deepseek.com: deepseek-reasoner
+default_provider: https://api.deepseek.com
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.7
+    max_tokens: 64000
+---
+display_name: deepseek-v3.2
+api_name:
+  https://api.deepseek.com: deepseek-chat
+default_provider: https://api.deepseek.com
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: 1
+---
+display_name: deepseek-v3.2-thinking
+api_name:
+  https://api.deepseek.com: deepseek-reasoner
+default_provider: https://api.deepseek.com
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: 1
+    max_tokens: 64000
+---
+display_name: deepseek-v3.2-speciale
+api_name:
+  https://api.deepseek.com/v3.2_speciale_expires_on_20251215: deepseek-reasoner
+default_provider: https://api.deepseek.com/v3.2_speciale_expires_on_20251215
+api_keys:
+  https://api.deepseek.com/v3.2_speciale_expires_on_20251215: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: 1
+    max_tokens: 64000
+---
+display_name: deepseek-v4-pro
+cost_per_million:
+  input: 0.435
+  cached_input: 0.0036
+  output: 0.87
+api_name:
+  https://api.deepseek.com: deepseek-v4-pro
+default_provider: https://api.deepseek.com
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: 1
+    max_tokens: 384000
+---
+# DeepSeek V4 Pro, GA build 0813 (api-docs.deepseek.com lists model id `deepseek-v4-pro`
+# with "version: DeepSeek-V4-Pro-0813"). There is NO dated API slug -- neither first-party
+# nor Fireworks exposes deepseek-v4-pro-0813 -- so the id below is an UNPINNED alias and this
+# row corresponds to whatever build was live when it ran. The dated display_name records
+# which build that was; re-check the docs' version string before reusing these numbers.
+# Fireworks was deliberately NOT used: its deepseek-v4-pro may lag the first-party build.
+# Rates verified against api-docs.deepseek.com/quick_start/pricing on 2026-08-13:
+# 0.435 in / 0.003625 cache-hit / 0.87 out. The cached ratio is 0.0083x -- an order of
+# magnitude below flash's 0.020x, so do NOT copy rates between the two.
+# NOTE: DeepSeek's pricing page announces "a significant increase expected" in the near
+# future; these are the rates in effect at run time.
+display_name: deepseek-v4-pro-0813
+cost_per_million:
+  input: 0.435
+  cached_input: 0.003625
+  output: 0.87
+api_name:
+  https://api.deepseek.com: deepseek-v4-pro
+default_provider: https://api.deepseek.com
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: 1
+    max_tokens: 384000
+---
+display_name: deepseek-v4-flash
+cost_per_million:
+  input: 0.14
+  cached_input: 0.0028
+  output: 0.28
+api_name:
+  https://api.deepseek.com: deepseek-v4-flash
+default_provider: https://api.deepseek.com
+api_keys:
+  https://api.deepseek.com: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: 1
+    max_tokens: 384000
+---
+# DeepSeek V4 Flash 0731 via the RESPONSES API on Fireworks (dated slug pins the 0731
+# build; the undated slug currently serves it too but is not guaranteed to). Fireworks
+# accepts tool_choice='required', so the agentic native path needs no special casing.
+display_name: deepseek-v4-flash-0731-fw
+# DeepSeek's published token rates ($0.14 in / $0.28 out). The cache rate is the SERVING
+# provider's (Fireworks), not DeepSeek's — the same weights on api.deepseek.com bill cache
+# reads 10x cheaper (see the -ds entry).
+# ⚠️ 0.028 (= 0.2x input) is an ESTIMATE, not a verified rate. It is consistent with the
+# per-model cached rates Fireworks publishes for comparable slugs (GLM-5.2 0.1x, Kimi-K2.6
+# 0.17x, MiniMax-M3 0.20x), but Fireworks publishes no cached rate for this slug.
+# CORRECTION (2026-08-04): an earlier version of this comment claimed 0.028 was derived by
+# reconciling against provider-reported cost. That was WRONG and the reasoning was circular:
+# `cost_usd` in the answer records is computed BY THE HARNESS from this very config
+# (gen_api_answer.py / run_inference.py), so it can never validate the config. There is no
+# independent billing figure anywhere in the pipeline. Replace this with a real invoice
+# number or a published rate when one is available.
+cost_per_million:
+  input: 0.14
+  cached_input: 0.028
+  output: 0.28
+api_name:
+  openai_responses: accounts/fireworks/models/deepseek-v4-flash-0731
+default_provider: openai_responses
+api_base: https://api.fireworks.ai/inference/v1
+api_keys:
+  openai_responses: FIREWORKS_API_KEY
+api_kwargs:
+  default:
+    temperature: null
+  openai_responses:
+    # 131072, NOT null: an unset cap makes Fireworks apply its 32768 default, and with
+    # thinking always on this model routinely blows past 32k mid-answer — 237/1198 regular
+    # answers truncated before emitting their final tag (consecutive_events scored 0/47).
+    max_output_tokens: 131072
+    timeout: 3600
+preserve_reasoning: true
+---
+# NOTE: this entry was NOT used for the published board row (Fireworks was). Kept because it
+# is the only route that preserves DeepSeek's own reasoning fidelity.
+# Same 0731 build on DeepSeek's OWN Responses endpoint. Thinking is always on here and
+# the API rejects tool_choice='required' with 400 "Thinking mode does not support this
+# tool_choice", so the agentic path falls back to 'auto' (see _native_tool_choice).
+display_name: deepseek-v4-flash-0731-ds
+# Served by DeepSeek directly, so DeepSeek's own rates apply — cache reads at 0.0028,
+# matching the existing deepseek-v4-flash entry above (same family, same published rate),
+# NOT the empirically-derived 0.028 on the Fireworks entry.
+# ⚠️ Unlike the Fireworks rate, this one has not been reconciled against a provider-reported
+# total, because no full run has used this entry. Reconcile it the same way before trusting
+# a cost column produced from it.
+cost_per_million:
+  input: 0.14
+  cached_input: 0.0028
+  output: 0.28
+api_name:
+  openai_responses: deepseek-v4-flash
+default_provider: openai_responses
+api_base: https://api.deepseek.com/v1
+api_keys:
+  openai_responses: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: null
+  openai_responses:
+    # 131072, NOT null: never leave this unset — an unset cap inherits whatever default the
+    # SERVING provider applies. With thinking always on this model routinely blows past 32k
+    # mid-answer; on the Fireworks entry above that cost 237/1198 truncated regular answers
+    # (consecutive_events scored 0/47 purely from truncation).
+    max_output_tokens: 131072
+    timeout: 3600
+preserve_reasoning: true
+---
+# DeepSeek V4 Flash Vision Exp — experimental vision-capable V4-Flash variant, released
+# 2026-08-21. First-party only (api-docs.deepseek.com lists model id
+# `deepseek-v4-flash-vision-exp`; OpenRouter merely forwards to DeepSeek). 1M context,
+# 384K max output, thinking default-ON. Run at MAX reasoning: the docs' effort scale is
+# low/high/max (default high), set via `reasoning.effort` on the Responses API.
+# Routed via DeepSeek's OWN Responses endpoint (same shape as the -0731-ds entry above):
+# preserves DeepSeek's reasoning fidelity, and the API rejects tool_choice='required' in
+# thinking mode, so the agentic path falls back to 'auto' (_native_tool_choice gates on
+# 'deepseek' in api_base). No streaming here — first-party allowed hour-long requests on
+# the -ds route (timeout 3600); if long regular answers die on a gateway timeout, that is
+# the failure mode streaming fixed on the Fireworks entry.
+# PRICING verified 2026-08-22 against api-docs.deepseek.com/quick_start/pricing: DeepSeek
+# moved to peak/off-peak billing on 2026-08-16 16:00 UTC (peak = 01:00–04:00 and
+# 06:00–10:00 UTC; the other 17h bill off-peak at HALF the peak rate). vision-exp bills
+# identically to deepseek-v4-flash: off-peak 0.22 / 0.007 cache-hit / 0.66 out; peak
+# 0.44 / 0.014 / 1.32. The rates below are the OFF-PEAK rates — launch runs using this
+# config inside the 10:00–01:00 UTC window; a run that straddles a peak window is
+# undercosted by up to 2x. Images are tokenized and billed as input tokens.
+display_name: deepseek-v4-flash-vision-exp
+cost_per_million:
+  input: 0.22
+  cached_input: 0.007
+  output: 0.66
+api_name:
+  openai_responses: deepseek-v4-flash-vision-exp
+default_provider: openai_responses
+api_base: https://api.deepseek.com/v1
+api_keys:
+  openai_responses: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: null
+  openai_responses:
+    reasoning:
+      effort: max
+    # explicit cap, never unset (an unset cap inherits the serving provider's default —
+    # see the truncation note on the -fw entry). 384000 = the documented model maximum;
+    # max-effort thinking traces need the headroom.
+    max_output_tokens: 384000
+    timeout: 3600
+preserve_reasoning: true
+---
+# DeepSeek V4.1 Flash (released 2026-09-10, https://api-docs.deepseek.com/updates) via DeepSeek's
+# OWN Responses endpoint, run at MAX reasoning effort. The API id is the UNPINNED alias
+# `deepseek-flash` (models.list on 2026-09-10 shows only deepseek-flash + deepseek-v4-pro; the
+# legacy deepseek-v4-flash / -vision-exp slugs now route here, and deepseek-v4-pro routes here
+# from 2026-09-14 12:00 Beijing). The display_name pins the build this row measured — re-check
+# the docs' version string before reusing these numbers. 1M context, 384K max output (docs).
+# Effort: thinking is default-ON at `high`; the Responses API takes `reasoning.effort` (probed
+# 2026-09-10: 'max' is echoed back as effort=max; the docs map minimal/low->low,
+# medium/high->high, xhigh/max/ultra->max). tool_choice='required' still 400s in thinking mode
+# ("Thinking mode does not support this tool_choice"), so the agentic path falls back to
+# 'auto' (_native_tool_choice gates on 'deepseek' in api_base). Same route shape as the
+# -0731-ds / -vision-exp entries above (no streaming; first-party allows hour-long requests).
+# PRICING verified 2026-09-10 against https://api-docs.deepseek.com/quick_start/pricing:
+# OFF-PEAK $0.15 in / $0.003 cache-hit / $0.60 out; PEAK (01:00-04:00 and 06:00-10:00 UTC,
+# Mon-Fri; all other hours incl. weekends are off-peak) is 2x: $0.30 / $0.006 / $1.20.
+# The rates below are the OFF-PEAK rates — launch inside the off-peak window; a run that
+# straddles a peak window is undercosted by up to 2x for that portion.
+display_name: deepseek-v4.1-flash-max
+cost_per_million:
+  input: 0.15
+  cached_input: 0.003
+  output: 0.6
+api_name:
+  openai_responses: deepseek-flash
+default_provider: openai_responses
+api_base: https://api.deepseek.com/v1
+api_keys:
+  openai_responses: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: null
+  openai_responses:
+    reasoning:
+      effort: max
+    # explicit cap, never unset (an unset cap inherits the serving provider's default — see
+    # the truncation note on the -fw entry). 384000 = the documented model maximum.
+    max_output_tokens: 384000
+    timeout: 3600
+preserve_reasoning: true
+---
+# DeepSeek-V4.1-Flash-1017: served as `deepseek-flash` from 2026-10-17 (api-docs.deepseek.com/updates; the alias is
+# unpinned and no dated id exists). Same request as deepseek-v4.1-flash-max (the 0910 build), own display name so
+# its rows stay separate. Probed 2026-10-17: reasoning.effort max on the wire and echoed back.
+display_name: deepseek-v4.1-flash-1017-max
+# Off-peak list price (api-docs.deepseek.com/quick_start/pricing, 2026-10-17; peak is 2x: 0.30 / 0.006 / 1.20). User
+# decision 2026-10-18: DeepSeek rows are reported at DeepSeek's own off-peak rates. The answers of run
+# deepseek-v4_1-flash-1017-max-20261017-2255-27742 carry cost_usd at the earlier peak rates (total $9.87); off-peak
+# is exactly half ($4.93), which is what the board reports.
+cost_per_million:
+  input: 0.15
+  cached_input: 0.003
+  output: 0.6
+api_name:
+  openai_responses: deepseek-flash
+default_provider: openai_responses
+api_base: https://api.deepseek.com/v1
+api_keys:
+  openai_responses: DEEPSEEK_API_KEY
+api_kwargs:
+  default:
+    temperature: null
+  openai_responses:
+    reasoning:
+      effort: max
+    # explicit cap, never unset (an unset cap inherits the serving provider's default — see
+    # the truncation note on the -fw entry). 384000 = the documented model maximum.
+    max_output_tokens: 384000
+    timeout: 3600
+preserve_reasoning: true

@@ -1,0 +1,103 @@
+# Mistral Models
+---
+display_name: mistral-large-latest
+api_name:
+  mistral: mistral-large-latest
+---
+display_name: mistral-large-2402
+api_name:
+  mistral: mistral-large-2402
+---
+display_name: mistral-medium-23-12
+api_name:
+  mistral: mistral-medium-23-12
+---
+display_name: mistral-small-2402
+api_name:
+  mistral: mistral-small-2402
+---
+display_name: open-mixtral-8x7b
+api_name:
+  mistral: open-mixtral-8x7b
+---
+display_name: open-mixtral-8x22b
+api_name:
+  mistral: open-mixtral-8x22b
+---
+display_name: mistral-large-2407
+api_name:
+  mistral: mistral-large-2407
+---
+display_name: open-mistral-nemo
+api_name:
+  mistral: open-mistral-nemo
+---
+display_name: mistral-large-2411
+api_name:
+  mistral: mistral-large-2411
+aliases:
+  - mistral-large
+---
+display_name: mistral-small-2409
+api_name:
+  mistral: mistral-small-2409
+---
+display_name: mistral-small-2501
+api_name:
+  mistral: mistral-small-2501
+---
+display_name: mistral-small-2503
+api_name:
+  mistral: mistral-small-2503
+aliases:
+  - mistral-small
+---
+display_name: mistral-medium-2505
+api_name:
+  mistral: mistral-medium-2505
+aliases:
+  - mistral-medium
+---
+display_name: devstral-small-2505
+api_name: 
+  mistral: devstral-small-2505
+aliases:
+  - devstral-small
+---
+display_name: devstral-2512
+api_name:
+  mistral: devstral-2512
+aliases:
+  - devstral
+api_kwargs:
+  default:
+    temperature: 0.7
+    top_p: 1
+---
+# Mistral Large 4 (public preview, launched 2026-10-06). Pricing per the model card
+# https://docs.mistral.ai/models/mistral-large-4 (verified 2026-10-06): $0.68/1M input,
+# $0.07/1M cached input, $2.09/1M output. These are a 50% LAUNCH DISCOUNT on the list
+# rates $1.36 / $0.14 / $4.18 (shown struck through); no end date is published. When the
+# discount ends, re-price this block to the list rates. Thinking tokens bill as output.
+# reasoning_effort defaults OFF on this model; "high" is the maximum setting (high|none).
+# max_tokens 262144: at 65536 the model exhausted its budget on 161 regular questions
+# (finish_reason=length, blank answer); at 131072, 68 of those retries still exhausted
+# (connections_3, consecutive_events, integrals_with_game, coding). 262144 is the largest
+# value the API was verified to accept (2026-10-06); the model card publishes no output
+# cap (context 524288).
+display_name: mistral-large-4-high
+cost_per_million:
+  input: 0.68
+  cached_input: 0.07
+  output: 2.09
+api_name:
+  mistral: mistral-large-4
+aliases:
+  - mistral-large-4
+agentic_native_tools: true
+api_kwargs:
+  default:
+    temperature: 0.7
+    max_tokens: 262144
+    reasoning_effort: high
+    stream: true

@@ -1,0 +1,440 @@
+# Qwen Models
+---
+display_name: qwen2.5-7b-instruct-turbo
+api_name:
+  together: Qwen/Qwen2.5-7B-Instruct-Turbo
+aliases:
+  - qwen2.5-7b-instruct
+---
+display_name: qwen2.5-72b-instruct-turbo
+api_name:
+  together: Qwen/Qwen2.5-72B-Instruct-Turbo
+  deepinfra: Qwen/Qwen2.5-72B-Instruct
+aliases:
+  - qwen2.5-72b-instruct
+default_provider: deepinfra
+---
+display_name: qwen2.5-coder-32b-instruct
+api_name:
+  together: Qwen/Qwen2.5-Coder-32B-Instruct
+aliases:
+  - qwen2.5-coder-32b-instruct
+---
+display_name: qwq-32b-preview
+api_name:
+  together: Qwen/QwQ-32B-Preview
+api_kwargs:
+  default:
+    max_tokens: 16000
+    temperature: 0.7
+    top_p: 0.95
+---
+display_name: qwq-32b
+api_name:
+  together: Qwen/QwQ-32B
+api_kwargs:
+  default:
+    max_tokens: 31000
+    temperature: 0.7
+    top_p: 0.95
+---
+display_name: qwen2.5-max
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen-max-2025-01-25
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+---
+display_name: qwen3-30b-a3b-thinking
+api_name:
+  deepinfra: Qwen/Qwen3-30B-A3B
+api_kwargs:
+  default:
+    max_tokens: 38912
+    temperature: 0.6
+    top_p: 0.95
+prompt_prefix: "/think"
+---
+display_name: qwen3-30b-a3b
+api_name:
+  deepinfra: Qwen/Qwen3-30B-A3B
+api_kwargs:
+  default:
+    temperature: 0.7
+    top_p: 0.8
+    max_tokens: 32000
+prompt_prefix: "/no_think"
+---
+display_name: qwen3-235b-a22b-thinking
+api_name:
+  deepinfra: Qwen/Qwen3-235B-A22B
+  together: Qwen/Qwen3-235B-A22B-fp8-tput
+default_provider: deepinfra
+api_kwargs:
+  default:
+    max_tokens: 38912
+    temperature: 0.6
+    top_p: 0.95
+prompt_prefix: "/think"
+---
+display_name: qwen3-32b-thinking
+api_name:
+  deepinfra: Qwen/Qwen3-32B
+api_kwargs:
+  default:
+    max_tokens: 38912
+    temperature: 0.6
+    top_p: 0.95
+prompt_prefix: "/think"
+---
+display_name: qwen3-14b-thinking
+api_name:
+  deepinfra: Qwen/Qwen3-14B
+api_kwargs:
+  default:
+    max_tokens: 38912
+    temperature: 0.6
+    top_p: 0.95
+prompt_prefix: "/think"
+---
+display_name: qwen3-235b-a22b-instruct-2507
+api_name:
+  deepinfra: Qwen/Qwen3-235B-A22B-Instruct-2507
+default_provider: deepinfra
+api_kwargs:
+  default:
+    temperature: 0.7
+    top_p: 0.8
+    max_tokens: 16384
+---
+display_name: qwen3-coder-480b-a35b-instruct
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3-coder-480b-a35b-instruct
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.7
+    top_p: 0.8
+    max_tokens: 65536
+---
+display_name: qwen3-coder-plus-2025-07-22
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3-coder-plus-2025-07-22
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.7
+    top_p: 0.8
+    max_tokens: 65536
+---
+display_name: qwen3-235b-a22b-thinking-2507
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3-235b-a22b-thinking-2507
+  deepinfra: Qwen/Qwen3-235B-A22B-Thinking-2507
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+default_provider: deepinfra
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 81920
+---
+display_name: qwen3-next-80b-a3b-thinking
+api_name:
+  https://api.novita.ai/openai: qwen/qwen3-next-80b-a3b-thinking
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3-next-80b-a3b-thinking
+api_keys:
+  https://api.novita.ai/openai: NOVITA_API_KEY
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 32768
+default_provider: https://api.novita.ai/openai
+---
+display_name: qwen3-next-80b-a3b-instruct
+api_name:
+  https://api.novita.ai/openai: qwen/qwen3-next-80b-a3b-instruct
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3-next-80b-a3b-instruct
+api_keys:
+  https://api.novita.ai/openai: NOVITA_API_KEY
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1:
+    max_tokens: 32768
+  https://api.novita.ai/openai:
+    max_tokens: 65536
+default_provider: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+---
+display_name: qwen3-max-2025-09-23
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3-max-2025-09-23
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    max_tokens: 16384
+aliases:
+  - qwen3-max
+---
+display_name: qwen3-max-2026-01-23
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3-max-2026-01-23
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 32768
+    stream: true
+    extra_body:
+      enable_thinking: true
+---
+display_name: qwen3.6-plus
+cost_per_million:
+  input: 0.5
+  output: 3.0
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3.6-plus
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 65536
+    stream: true
+    extra_body:
+      enable_thinking: true
+---
+display_name: qwen3.6-flash
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3.6-flash
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 65536
+    stream: true
+    extra_body:
+      enable_thinking: true
+---
+display_name: qwen3.6-27b
+cost_per_million:
+  input: 0.6
+  output: 3.6
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3.6-27b
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 65536
+    stream: true
+    extra_body:
+      enable_thinking: true
+---
+display_name: qwen3.7-max
+# Published Alibaba Model Studio rates (verified 2026-08-04): $2.50 input / $7.50 output,
+# IMPLICIT cache read $0.25/1M. Alibaba prices the two cache modes differently -- implicit
+# $0.25 vs explicit $0.125 -- and LiveBench does not wire explicit context caching, so the
+# IMPLICIT rate is the correct one to bill at. (Same reasoning as qwen3.8-max, which is also
+# $0.25 implicit.) Do not substitute the cheaper explicit rate.
+cost_per_million:
+  input: 2.5
+  cached_input: 0.25
+  output: 7.5
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3.7-max
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 65536
+    stream: true
+    extra_body:
+      enable_thinking: true
+---
+# Qwen via DashScope's OpenAI-compatible Responses endpoint (/compatible-mode/v1/responses)
+display_name: qwen3.6-plus-responses
+cost_per_million:
+  input: 0.5
+  output: 3.0
+api_name:
+  openai_responses: qwen3.6-plus
+default_provider: openai_responses
+api_base: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+api_keys:
+  openai_responses: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_output_tokens: 65536
+---
+# Qwen 3.8 Max via DashScope's OpenAI-compatible CHAT endpoint (the proven qwen path).
+# Characterised 2026-08-03 before launch:
+#  * thinking is ALWAYS ON — extra_body.enable_thinking=False still returns reasoning_content,
+#    so answers are long and completion_tokens run ~2x the visible max_tokens.
+#  * ~50 tok/s, so a long answer takes 10+ min; `stream: true` is REQUIRED to keep the
+#    connection alive (a non-streamed long request times out).
+#  * max_tokens is set EXPLICITLY (never null): an unset cap inherits a provider default and
+#    silently truncates answers mid-thought, which scores 0. See the deepseek-0731 incident.
+#  * tool_choice='required' is REJECTED (400 "does not support ... in thinking mode"), so the
+#    agentic native path must use 'auto' for this model.
+display_name: qwen3.8-max
+# Published Alibaba Model Studio rates (verified 2026-08-04): $2.00/1M input, $6.00/1M
+# output, implicit cache reads $0.25/1M. NOT the 2.5/7.5 of qwen3.7-max — do not copy
+# pricing between Qwen generations. Thinking tokens bill as OUTPUT, which matters here
+# because thinking cannot be disabled on this model.
+cost_per_million:
+  input: 2.0
+  cached_input: 0.25
+  output: 6.0
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3.8-max
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 65536
+    stream: true
+    extra_body:
+      enable_thinking: true
+---
+# Qwen3.8-27B (dense 27B, vision-language, thinking ON by default) via featherless.ai —
+# first featherless entry. OpenAI-compatible chat endpoint, characterised 2026-08-17:
+#  * served at context 32768 / max_completion 32768 (native 262k) — the provider CLAMPS
+#    max_tokens to available context instead of 400ing (verified: 9k prompt + 32000 cap
+#    returned 200), so the full 32768 cap below is safe.
+#  * thinking arrives on a `reasoning` field (NOT `reasoning_content`), so the harness
+#    archives only the final `content` — answers are unaffected. Thinking is VERBOSE:
+#    a short-essay probe burned a 4000-token cap entirely on reasoning; never trim the cap.
+#  * native tool calling verified, tool_choice='required' accepted.
+#  * streaming verified incl. stream_options.include_usage
+#    (usage.prompt_tokens_details.cached_tokens present); ~73 tok/s.
+#  * concurrency is the real limit: featherless reserves 2 units/request for this model
+#    class; 40 concurrent (80 units) verified 429-free on the current key.
+display_name: qwen3.8-27b
+# Featherless bills flat-rate subscriptions (concurrency units, not tokens). The rates
+# below are the provider's own per-token listing from its API metadata
+# (https://api.featherless.ai/v1/models, verified 2026-08-17): $0.265 in / $0.65 out.
+# No published cache discount -> cached_input = full input rate (usage does report
+# cached_tokens, but no discounted rate exists to apply).
+cost_per_million:
+  input: 0.265
+  cached_input: 0.265
+  output: 0.65
+api_name:
+  https://api.featherless.ai/v1: Qwen/Qwen3.8-27B
+api_keys:
+  https://api.featherless.ai/v1: FEATHERLESS_API_KEY
+default_provider: https://api.featherless.ai/v1
+api_kwargs:
+  default:
+    # Qwen3.8 thinking-mode recommended sampling (model card): temp 1.0, top_p 0.95.
+    temperature: 1.0
+    top_p: 0.95
+    max_tokens: 32768
+    stream: true
+---
+# Qwen3.5-9B (dense 9B, thinking ON by default) via Together, full-precision
+# serve (Qwen/Qwen3.5-9B, NOT the -FP8 variant; ctx 262144 per Together's model
+# metadata, verified 2026-08-18). DashScope-intl does NOT host the 9B (its 3.5
+# open lineup is 27b/35b-a3b/122b-a10b/397b-a17b — checked live 2026-08-18), and
+# Together is the fastest measured host (72 tok/s vs DeepInfra 23, openrouter
+# provider stats). Model card (huggingface.co/Qwen/Qwen3.5-9B): thinking-mode
+# sampling temp 1.0 / top_p 0.95; recommended max output 32768 (81920 for
+# complex math/coding). Cap set explicitly (never null — an unset cap inherits
+# the provider default and silently truncates; deepseek-0731).
+display_name: qwen3.5-9b
+# Together rates $0.17/1M in / $0.25/1M out (https://openrouter.ai/qwen/qwen3.5-9b
+# Together row, verified 2026-08-18). No published Together cache discount ->
+# cached_input = full input rate (same convention as qwen3.8-27b).
+cost_per_million:
+  input: 0.17
+  cached_input: 0.17
+  output: 0.25
+api_name:
+  together: Qwen/Qwen3.5-9B
+api_kwargs:
+  default:
+    # thinking is ON by default for Qwen3.5; no enable_thinking toggle needed
+    # (that's a DashScope/vLLM chat-template kwarg, not a Together param)
+    temperature: 1.0
+    top_p: 0.95
+    max_tokens: 65536
+    stream: true
+---
+# Qwen3.5-9B base leg for Balajee's RL pair, served on a self-hosted RunPod
+# vLLM (full precision, /workspace/qwen3.5-9b, max_model_len 262144 — probed
+# live, verified 2026-08-19, https://4wh5ju4vjhxmp8-8000.proxy.runpod.net/v1).
+# vLLM serve flags (AUTHORITATIVE for both RL-pair legs — the merged-LoRA leg
+# MUST use the identical set; verified 2026-08-19 against the model's own
+# chat_template.jinja, which renders XML-style tool calls, NOT hermes JSON):
+#   --enable-auto-tool-choice --tool-call-parser qwen3_xml --reasoning-parser qwen3
+#   --enable-lora --max-lora-rank 64 --max-model-len 262144
+# With --reasoning-parser qwen3, thinking lands in reasoning_content, matching
+# the Together reference leg. Without --tool-call-parser the agentic native
+# path 400s on tool_choice=required (caught by smoke.sh 2026-08-19); with the
+# WRONG parser (hermes) it parses zero tool calls silently — worse. Sampling
+# tuple FROZEN to match the qwen3.5-9b reference row: temp 1.0 / top_p 0.95 /
+# max_tokens 65536.
+display_name: qwen3.5-9b-vllm
+# Self-hosted pod, flat rental — per-token cost is $0 by construction
+# (verified 2026-08-19, pod is Balajee's own runpod.net instance). Do NOT
+# publish a cost row from this config.
+cost_per_million:
+  input: 0.0
+  cached_input: 0.0
+  output: 0.0
+api_name:
+  https://4wh5ju4vjhxmp8-8000.proxy.runpod.net/v1: qwen3p5-9b-base
+api_keys:
+  https://4wh5ju4vjhxmp8-8000.proxy.runpod.net/v1: RUNPOD_API_KEY
+api_kwargs:
+  default:
+    temperature: 1.0
+    top_p: 0.95
+    max_tokens: 65536
+    stream: true
+
+
+---
+# Qwen3.8 Flash Next — 125B MoE (6B active), hybrid attention, 1M ctx, thinking default ON.
+# Published Alibaba / DashScope rates (verified 2026-08-26, https://qwencloud.com):
+# $0.16/1M input, $0.47/1M output, implicit cache $0.016/1M.
+# Thinking tokens bill as OUTPUT (same as qwen3.8-max).
+display_name: qwen3.8-flash-next
+cost_per_million:
+  input: 0.16
+  cached_input: 0.016
+  output: 0.47
+api_name:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: qwen3.8-flash
+api_keys:
+  https://dashscope-intl.aliyuncs.com/compatible-mode/v1: ALIBABA_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    top_p: 0.95
+    max_tokens: 131072
+    stream: true
+    extra_body:
+      enable_thinking: true

@@ -1,0 +1,807 @@
+"""Generate answers with GPT-4
+
+Usage:
+python3 gen_api_answer.py --model gpt-3.5-turbo
+"""
+
+import argparse
+import json
+import os
+import threading
+import time
+import concurrent.futures
+import glob
+import shortuuid
+import tqdm
+
+from livebench.model.api_model_config import APIKwargs
+from livebench.agentic_code_runner.minisweagent.run_inference import run_agentic_coding_inference
+
+from livebench.model.completions import API_ERROR_OUTPUT
+from livebench.common import (
+    LIVE_BENCH_RELEASES,
+    reorg_answer_file,
+    get_categories_tasks,
+    load_questions,
+    load_questions_jsonl,
+    load_test_cases_jsonl,
+    LIVE_BENCH_DATA_SUPER_PATH,
+    filter_questions,
+    check_agentic_coding_requirements,
+    AGENTIC_CODING_CATEGORIES
+)
+
+from livebench.model import ModelConfig, get_model_config, get_api_function
+from livebench.incremental_judge import GradingPool, resolve_grading_workers
+from livebench.question_weights import regular_task_weight
+
+
+def get_answer(
+    question: dict,
+    model_api_name: str,
+    provider: str,
+    force_temperature: float | None,
+    max_tokens: int,
+    num_choices: int,
+    model_config: ModelConfig,
+    api_kwargs: dict[str, str] | None = None,
+    api_dict: dict[str, str] | None = None,
+    stream: bool = False,
+    answer_file: str | None = None,
+    model_display_name_override: str | None = None,
+    model_provider_override: str | None = None,
+    use_litellm: bool = False,
+
+):
+    """
+    Perform inference for a single question.
+
+    Args:
+        question: At minimum, a dictionary with a key 'turns' that maps to a list of messages in the conversation, the last of which should ask the question.
+        model: The API name for the model (e.g. gpt-4o-mini or claude-3-5-sonnet-20240620)
+        model_display_name_override: The display name for the model (e.g. gpt-4o-mini or claude-3-5-sonnet-20240620)
+        num_choices: The number of model outputs to generate for each question
+        max_tokens: The maximum number of tokens for each model response
+        answer_file: The path to the file in which to write answers
+        api_dict: A dictionary specifying the base API URL and key for model requests
+    """
+    t_start = time.time()
+
+    assert (
+        force_temperature is not None and "required_temperature" in question.keys()
+    ) is False
+    if force_temperature is not None:
+        temperature = force_temperature
+    elif "required_temperature" in question.keys():
+        temperature = question["required_temperature"]
+    else:
+        temperature = 0
+
+    metadata = {}
+
+    
+    choices = []
+    total_num_tokens = 0
+    total_input_tokens = 0
+    total_cached_tokens = 0
+    for i in range(num_choices):
+        messages = []
+
+        if 'system_prompt' in question:
+            messages.append({"role": "system", "content": question['system_prompt']})
+
+        turns = []
+        reasoning_turns = []
+        for j in range(len(question["turns"])):
+            prompt = question["turns"][j]
+            if model_config.prompt_prefix:
+                prompt = model_config.prompt_prefix + "\n" + prompt
+            messages.append({"role": "user", "content": prompt})
+
+            res = get_api_function(provider, use_litellm)(
+                model=model_api_name,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                model_api_kwargs=api_kwargs,
+                api_dict=api_dict,
+                stream=stream
+            )
+
+            if len(res) == 3:
+                output, num_tokens, m = res
+            else:
+                output, num_tokens = res
+                m = None
+
+            if m is not None:
+                # keep the thinking out of api_info; store it alongside turns instead
+                turn_reasoning = m.pop('reasoning_content', None)
+                if turn_reasoning:
+                    reasoning_turns.append(turn_reasoning)
+                turn_input_tokens = m.pop('input_tokens', None)
+                if turn_input_tokens is not None:
+                    total_input_tokens += turn_input_tokens
+                turn_cached_tokens = m.pop('cached_tokens', None)
+                if turn_cached_tokens is not None:
+                    total_cached_tokens += turn_cached_tokens
+                metadata.update(m)
+
+            messages.append({"role": "assistant", "content": output})
+            turns.append(output)
+            total_num_tokens += num_tokens
+
+        choice = {"index": i, "turns": turns}
+        if reasoning_turns:
+            choice["reasoning"] = reasoning_turns
+        choices.append(choice)
+
+    cost_usd = None
+    if getattr(model_config, 'cost_per_million', None):
+        cpm = model_config.cost_per_million
+        out_tokens = total_num_tokens if total_num_tokens and total_num_tokens > 0 else 0
+        cached = total_cached_tokens if 'cached_input' in cpm else 0
+        uncached = max(total_input_tokens - cached, 0)
+        cost_usd = round(
+            (uncached / 1_000_000) * cpm.get('input', 0)
+            + (cached / 1_000_000) * cpm.get('cached_input', cpm.get('input', 0))
+            + (out_tokens / 1_000_000) * cpm.get('output', 0),
+            6,
+        )
+
+    # Dump answers
+    ans = {
+        "question_id": question["question_id"],
+        "answer_id": shortuuid.uuid(),
+        "model_id": model_display_name_override if model_display_name_override else model_config.display_name.lower(),
+        "choices": choices,
+        "tstamp": time.time(),
+        "total_time_s": round(time.time() - t_start, 2),
+        "total_output_tokens": total_num_tokens,
+        "total_input_tokens": total_input_tokens,
+        "total_cached_tokens": total_cached_tokens,
+        "cost_usd": cost_usd,
+        "api_info": {
+            "provider": provider if provider != 'local' else api_dict['api_base'],
+            "api_name": model_api_name,
+            "api_kwargs": api_kwargs,
+            **metadata
+        }
+    }
+
+    if metadata.get("eval_status"):
+        ans["eval_status"] = metadata["eval_status"]
+    if metadata.get("error"):
+        ans["error"] = metadata["error"]
+        ans["error_msg"] = metadata.get("error_msg", "")
+
+    # Use answer_file parameter if provided (as override), otherwise use question's answer_file
+    output_file = answer_file if answer_file is not None else question.get('answer_file')
+    if output_file is not None:
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        with open(output_file, "a") as fout:
+            fout.write(json.dumps(ans) + "\n")
+
+    return ans
+
+
+def setup_model(model_config: ModelConfig, api_dict: dict[str, str] | None = None, model_provider_override: str | None = None) -> tuple[str, APIKwargs | None, str, dict[str, str] | None]:
+    
+    provider = model_provider_override
+
+    if provider is None:
+        provider = model_config.default_provider
+    if provider is None:
+        provider = list(model_config.api_name.keys())[0] if len(model_config.api_name.keys()) > 0 else None
+
+    if provider is None and api_dict is not None:
+        assert 'api_base' in api_dict, "Missing API base for model"
+        provider = 'local'
+
+    if provider is None:
+        raise ValueError(f"Missing provider for model {model_config.display_name}")
+    
+    if 'https' in provider:
+        # provider name is a base URL
+        if api_dict is None:
+            api_dict = {
+                'api_base': provider,   
+            }
+            if model_config.api_keys and os.environ.get(model_config.api_keys[provider]):
+                api_dict['api_key'] = os.environ.get(model_config.api_keys[provider])
+    
+
+    # Explicit api_base for a non-URL provider (e.g. openai_responses pointing at a
+    # non-OpenAI Responses endpoint such as Meta's api.meta.ai/v1).
+    if api_dict is None and getattr(model_config, 'api_base', None):
+        api_dict = {'api_base': model_config.api_base}
+        if model_config.api_keys and provider in model_config.api_keys and os.environ.get(model_config.api_keys[provider]):
+            api_dict['api_key'] = os.environ.get(model_config.api_keys[provider])
+
+    api_kwargs = None
+    if model_config.api_kwargs:
+        api_kwargs = {}
+        if model_config.api_kwargs.get('default'):
+            # pull default kwargs for model
+            api_kwargs = model_config.api_kwargs['default']
+        if provider in model_config.api_kwargs:
+            # update with provider-specific kwargs
+            api_kwargs.update(model_config.api_kwargs[provider])
+
+    if provider == 'local':
+        assert api_dict is not None, "Missing API dict for local model"
+        assert 'api_base' in api_dict, "Missing API base for local model"
+
+    model_api_name = model_config.api_name[provider] if provider in model_config.api_name else model_config.display_name
+
+    return provider, api_kwargs, model_api_name, api_dict
+
+
+def run_questions(
+    parallel,
+    questions: list[dict],
+    model_config: ModelConfig,
+    num_choices: int,
+    max_tokens: int,
+    answer_file: str | None,
+    stream: bool,
+    force_temperature: float | None,
+    model_provider_override: str | None,
+    model_display_name_override: str | None = None,
+    api_dict: dict[str, str] | None = None,
+    use_litellm: bool = False,
+    agentic_grading_parallel: int = -1,
+    parallel_control_file: str | None = None,
+    agentic_parallel: int | None = None,
+    resume: bool = False,
+    grading_parallel: int = -1,
+    incremental_grading: bool = True,
+):
+    """
+    Perform inference on a list of questions. Output answers to answer_file.
+
+    Args:
+        questions: The list of questions.
+        model: The display name for the model (e.g. gpt-4o-mini or claude-3-5-sonnet-20240620) or an alias
+        num_choices: The number of model outputs to generate for each question
+        max_tokens: The maximum number of tokens for each model response
+        answer_file: The path to the file in which to write answers
+        parallel: The number of workers to use to make concurrent API requests
+        api_dict: A dictionary specifying the base API URL and key for model requests
+    """
+
+    assert all(answer_file is not None or question.get('answer_file') is not None for question in questions), "Missing answer file for some questions"
+
+    provider, api_kwargs, model_api_name, api_dict = setup_model(model_config, api_dict, model_provider_override)
+
+    print('Model API name: ', model_api_name)
+    print('Evaluating ', len(questions), ' questions with model ', model_config.display_name)
+   
+    # Split questions into agentic_coding and non-agentic_coding
+    agentic_coding_questions = [q for q in questions if q.get('category') in AGENTIC_CODING_CATEGORIES]
+    normal_questions = [q for q in questions if q.get('category') not in AGENTIC_CODING_CATEGORIES]
+    
+    # Process agentic coding questions if any. When regular questions are also
+    # present, the agentic run happens on a side thread so both lanes proceed
+    # concurrently (containers vs API requests are separate budgets) — one
+    # process replaces the old two-tmux-session workaround.
+    agentic_thread = None
+    agentic_error: list[BaseException] = []
+    if agentic_coding_questions:
+        if not check_agentic_coding_requirements():
+            print("Warning: litellm or docker missing, skipping agentic coding evaluation")
+        else:
+            print(f'Processing {len(agentic_coding_questions)} agentic coding questions')
+            # Agentic-only kwargs overlay (api_kwargs['agentic'] in the model config):
+            # native tool-calling models can declare tools or cap max_tokens for the
+            # agentic harness without affecting regular-category requests.
+            agentic_api_kwargs = api_kwargs
+            if model_config.api_kwargs and model_config.api_kwargs.get('agentic'):
+                agentic_api_kwargs = {**(api_kwargs or {}), **model_config.api_kwargs['agentic']}
+            # Container concurrency is a separate budget from API concurrency: a
+            # dedicated agentic run keeps the full --parallel (current behavior),
+            # but a combined agentic+regular run caps containers at 15 unless
+            # --agentic-parallel says otherwise.
+            effective_agentic_parallel = agentic_parallel
+            if effective_agentic_parallel is None:
+                effective_agentic_parallel = parallel if not normal_questions else min(parallel, 15)
+
+            def _run_agentic():
+                try:
+                    run_agentic_coding_inference(
+                        questions=agentic_coding_questions,
+                        model_api_name=model_api_name,
+                        provider=provider,
+                        force_temperature=force_temperature,
+                        num_choices=num_choices,
+                        model_api_kwargs=agentic_api_kwargs,
+                        api_dict=api_dict,
+                        model_display_name_override=model_display_name_override,
+                        answer_file=answer_file,
+                        parallel=effective_agentic_parallel,
+                        preserve_reasoning=model_config.preserve_reasoning,
+                        grading_parallel=agentic_grading_parallel,
+                        resume=resume,
+                    )
+                except BaseException as e:
+                    agentic_error.append(e)
+                    print(f"agentic lane failed: {type(e).__name__}: {e}")
+
+            if normal_questions:
+                agentic_thread = threading.Thread(target=_run_agentic, name="agentic-lane")
+                agentic_thread.start()
+            else:
+                _run_agentic()
+                if agentic_error:
+                    raise agentic_error[0]
+
+    # Process normal questions if any
+    if normal_questions:
+        print(f'Processing {len(normal_questions)} standard questions')
+
+        # Longest-tasks-first: makespan is decided by when the slow tasks start,
+        # not by how fast the cheap ones finish (see question_weights.py).
+        normal_questions = sorted(normal_questions, key=regular_task_weight, reverse=True)
+
+        # Grade-as-you-go: each completed answer goes straight to a grading pool
+        # (CPU-capped; generation threads are network-bound so the budgets don't
+        # compete). The batch judgment pass remains the idempotent backstop.
+        grading_pool = None
+        grading_workers = resolve_grading_workers(grading_parallel)
+        if incremental_grading and grading_workers > 0:
+            judge_model_id = (model_display_name_override if model_display_name_override
+                              else model_config.display_name).lower()
+            grading_pool = GradingPool(judge_model_id, grading_workers)
+            print(f"Incremental grading ON: pool of {grading_workers} grading workers "
+                  "alongside answer generation")
+
+        if parallel == 1:
+            for question in tqdm.tqdm(normal_questions):
+                ans = get_answer(
+                    question=question,
+                    model_api_name=model_api_name,
+                    provider=provider,
+                    force_temperature=force_temperature,
+                    max_tokens=max_tokens,
+                    num_choices=num_choices,
+                    api_kwargs=api_kwargs,
+                    api_dict=api_dict,
+                    stream=stream,
+                    model_display_name_override=model_display_name_override,
+                    answer_file=answer_file,
+                    model_config=model_config,
+                    use_litellm=use_litellm,
+                )
+                if grading_pool is not None:
+                    grading_pool.submit(question, ans)
+        else:
+            # Live-resizable concurrency (opt-in): with --parallel-control-file, the
+            # pool is sized to a ceiling and gated by a semaphore whose capacity a
+            # watcher thread re-reads from the file every 10s — `echo 60 > <file>`
+            # rescales a running eval without losing in-flight requests. Without the
+            # flag this is a plain fixed pool, exactly as before.
+            gate = None
+            watch_stop = None
+            pool_size = parallel
+            if parallel_control_file:
+                pool_size = max(parallel * 8, 256)
+                gate = threading.Semaphore(parallel)
+                watch_stop = threading.Event()
+                # Shrink is enforced by a target/in-flight counter rather than by the
+                # watcher acquiring permits: Semaphore hands permits out FIFO, so a
+                # watcher queued behind hundreds of waiting workers would only get
+                # its permits after they all started (shrink never took effect).
+                target = [parallel]
+                inflight = [0]
+                inflight_lock = threading.Lock()
+
+                def _watch_parallel_override(cur=parallel):
+                    while not watch_stop.is_set():
+                        try:
+                            v = int(open(parallel_control_file).read().strip())
+                        except (OSError, ValueError):
+                            v = None
+                        if v and 0 < v != cur:
+                            v = min(v, pool_size)
+                            print(f"parallel override: {cur} -> {v} (from {parallel_control_file})")
+                            if v > cur:
+                                for _ in range(v - cur):
+                                    gate.release()
+                            target[0] = v  # shrink takes effect as workers finish
+                            cur = v
+                        watch_stop.wait(10)
+
+                threading.Thread(target=_watch_parallel_override, daemon=True).start()
+
+            def _gated_get_answer(**kw):
+                if gate is not None:
+                    gate.acquire()
+                    while True:
+                        with inflight_lock:
+                            if inflight[0] < target[0]:
+                                inflight[0] += 1
+                                break
+                        time.sleep(1)
+                try:
+                    ans = get_answer(**kw)
+                finally:
+                    if gate is not None:
+                        with inflight_lock:
+                            inflight[0] -= 1
+                        gate.release()
+                if grading_pool is not None:
+                    grading_pool.submit(kw['question'], ans)
+                return ans
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=pool_size) as executor:
+                futures = []
+                for question in normal_questions:
+                    future = executor.submit(
+                        _gated_get_answer,
+                        question=question,
+                        model_api_name=model_api_name,
+                        provider=provider,
+                        force_temperature=force_temperature,
+                        max_tokens=max_tokens,
+                        num_choices=num_choices,
+                        api_kwargs=api_kwargs,
+                        api_dict=api_dict,
+                        stream=stream,
+                        model_display_name_override=model_display_name_override,
+                        answer_file=answer_file,
+                        model_config=model_config,
+                        use_litellm=use_litellm,
+                    )
+                    futures.append(future)
+
+                for future in tqdm.tqdm(
+                    concurrent.futures.as_completed(futures), total=len(futures)
+                ):
+                    future.result()
+            if watch_stop is not None:
+                watch_stop.set()
+
+        if grading_pool is not None:
+            grading_pool.drain_and_close()
+
+    # Wait for the agentic lane before tidying files
+    if agentic_thread is not None:
+        if agentic_thread.is_alive():
+            print("Regular questions done; waiting for the agentic lane to finish")
+        agentic_thread.join()
+
+    # Reorganize all answer files
+    if len(questions) > 0:
+        # Collect unique answer files from questions
+        answer_files_to_reorg = set()
+        
+        if answer_file is not None:
+            # If answer_file parameter is provided, it overrides all question-specific files
+            answer_files_to_reorg.add(answer_file)
+        else:
+            # Otherwise, collect unique answer files from questions
+            for question in questions:
+                if 'answer_file' in question:
+                    answer_files_to_reorg.add(question['answer_file'])
+        
+        # Reorganize each unique answer file
+        for file in answer_files_to_reorg:
+            reorg_answer_file(file)
+
+    if agentic_error:
+        raise agentic_error[0]
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Generate benchmark question answers using an API-based model"
+    )
+    parser.add_argument(
+        "--bench-name",
+        type=str,
+        nargs="+",
+        default="live_bench",
+        help="The name(s) of the benchmark question set. Defaults to 'live_bench', or all tasks in the benchmark. Specify e.g. live_bench/reasoning/web_of_lies_v2 to generate only for that task.",
+    )
+    parser.add_argument(
+        "--api-base",
+        type=str,
+        default=None,
+        help="If provided, will be used as the base of an openai API request, along with the environment variable LIVEBENCH_API_KEY",
+    )
+    parser.add_argument("--model", type=str, default="gpt-3.5-turbo")
+    parser.add_argument(
+        "--num-choices",
+        type=int,
+        default=1,
+        help="How many completion choices to generate.",
+    )
+    parser.add_argument(
+        "--force-temperature", type=float, help="Forcibly set a sampling temperature."
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=4096,
+        help="The maximum number of new generated tokens.",
+    )
+    parser.add_argument(
+        "--question-begin",
+        type=int,
+        help="A debug option. The begin index of questions.",
+    )
+    parser.add_argument(
+        "--question-end", type=int, help="A debug option. The end index of questions."
+    )
+    parser.add_argument(
+        "--parallel", type=int, default=1, help="The number of concurrent API calls."
+    )
+    parser.add_argument(
+        "--parallel-control-file", type=str, default=None,
+        help="Path to a file the runner polls every 10s for a new concurrency value; "
+             "`echo 60 > <file>` rescales a RUNNING eval's regular-question parallelism "
+             "without losing in-flight requests (ceiling = max(8x initial, 256); the "
+             "agentic path is unaffected). Absent file = keep current value."
+    )
+    parser.add_argument(
+        "--agentic-grading-parallel", type=int, default=-1,
+        help="Grade agentic coding instances incrementally as they complete, using a "
+             "grader pool of this many workers running alongside the answer phase. "
+             "Scores land in the agentic eval cache, which the judgment pass reuses "
+             "instead of re-running the docker evals. Default -1 = auto "
+             "(min(8, cpu_count)); 0 disables (grade everything at the end)."
+    )
+    parser.add_argument(
+        "--grading-parallel", type=int, default=-1,
+        help="Workers for grading regular-category answers as they are generated "
+             "(grade-as-you-go). Grading is CPU-bound, so the value is capped at "
+             "cpu_count. Default -1 = auto (min(cpu_count, 16)); 0 disables."
+    )
+    parser.add_argument(
+        "--no-incremental-grading",
+        action="store_true",
+        default=False,
+        help="Do not grade regular-category answers as they are generated; leave all "
+             "grading to the gen_ground_truth_judgment pass."
+    )
+    parser.add_argument(
+        "--no-traj-harvest",
+        action="store_true",
+        default=False,
+        help="With --resume, do NOT synthesize agentic answer rows from trajectories a "
+             "previous run left behind. Use when re-running questions whose answer rows "
+             "were deliberately deleted (e.g. targeted reruns), where harvesting would "
+             "resurrect the old answer instead of re-running."
+    )
+    parser.add_argument(
+        "--agentic-parallel", type=int, default=None,
+        help="Concurrent docker containers for agentic coding questions, as a budget "
+             "separate from --parallel (which governs API request concurrency). "
+             "Default: --parallel for a dedicated agentic run, min(--parallel, 15) "
+             "when agentic and regular questions run in one invocation."
+    )
+    parser.add_argument(
+        "--question-source",
+        type=str,
+        default="huggingface",
+        help="The source of the questions. 'huggingface' will draw questions from huggingface. 'jsonl' will gather local jsonl files at data/{bench_name}/**/question.jsonl to permit tweaking or writing custom questions.",
+    )
+    parser.add_argument(
+        "--livebench-release-option",
+        type=str,
+        default=max(LIVE_BENCH_RELEASES),
+        choices=sorted(LIVE_BENCH_RELEASES),
+        help="Livebench release to use. Provide a single date option. Will handle excluding deprecated questions for selected release.",
+    )
+    parser.add_argument(
+        "--question-id",
+        type=str,
+        default=None,
+        nargs="+",
+        help="A list of question ids to generate answers for.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help="Do not generate answers for questions that have already been generated, unless they were errors and --retry-failures is set."
+    )
+    parser.add_argument(
+        "--model-display-name",
+        type=str,
+        default=None,
+        help="Optional display name of the model. If not provided, will be inferred from --model.",
+    )
+    parser.add_argument(
+        "--retry-failures",
+        action="store_true",
+        default=False,
+        help="Retry generating answers for questions that have failed in the past.",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        default=False,
+        help="Stream responses, for models that support streaming"
+    )
+    parser.add_argument(
+        "--use-litellm",
+        action="store_true",
+        default=False,
+        help="Route requests through LiteLLM instead of the per-provider clients"
+    )
+    parser.add_argument(
+        "--model-provider-override",
+        type=str,
+        default=None,
+        help="Override the provider for the model. If not provided, will be inferred from --model.",
+    )
+    parser.add_argument(
+        "--answer-file",
+        type=str,
+        default=None,
+        help="Override the answer file path. If provided, all answers will be written to this file instead of the default location.",
+    )
+    args = parser.parse_args()
+
+
+    if args.livebench_release_option not in LIVE_BENCH_RELEASES:
+        raise ValueError(f"Bad release {args.livebench_release_option}.")
+
+    release_set = set(
+        [r for r in LIVE_BENCH_RELEASES if r <= args.livebench_release_option]
+    )
+
+    if args.api_base is not None:
+        # use manually-specified model API
+
+        api_key = os.environ.get("LIVEBENCH_API_KEY", "EMPTY")
+
+        api_dict = {
+            "api_key": api_key,
+            "api_base": args.api_base,
+        }
+    elif os.environ.get("LIVEBENCH_API_KEY") is not None:
+        api_dict = {
+            "api_key": os.environ.get("LIVEBENCH_API_KEY"),
+        }
+    else:
+        api_dict = None
+
+    model_config = get_model_config(args.model)
+    model_display_name = args.model_display_name if args.model_display_name else model_config.display_name
+
+    if args.question_source == "huggingface":
+        # Collect all questions upfront across all benchmark names
+        all_questions = []
+        
+        for bench_name in args.bench_name:
+            categories, tasks = get_categories_tasks(bench_name)
+            
+            for category_name, task_names in tasks.items():
+                for task_name in task_names:
+                    questions = load_questions(
+                        categories[category_name],
+                        release_set,
+                        args.livebench_release_option,
+                        task_name,
+                        args.question_id
+                    )
+
+                    questions = questions[args.question_begin:args.question_end]
+
+                    task_full_name = (
+                        f"{LIVE_BENCH_DATA_SUPER_PATH}/{category_name}/{task_name}"
+                    )
+                    answer_file = args.answer_file if args.answer_file else (
+                        f"data/{task_full_name}/model_answer/{model_display_name.lower()}.jsonl"
+                    )
+
+                    questions = filter_questions(questions, answer_file, args.resume, args.retry_failures)
+
+                    # Attach answer_file to each question and task info for agentic_coding
+                    for question in questions:
+                        question['answer_file'] = answer_file
+                        # destination for grade-as-you-go judgments (same per-task
+                        # path the judgment pass writes to)
+                        question['_judgment_file'] = (
+                            f"data/{task_full_name}/model_judgment/ground_truth_judgment.jsonl"
+                        )
+
+                    all_questions.extend(questions)
+
+                    print(f"Questions from {task_full_name}")
+        
+        if all_questions:
+            print(f"Running {len(all_questions)} questions together across {len(args.bench_name)} benchmark(s)")
+            run_questions(
+                parallel=args.parallel,
+                questions=all_questions,
+                model_config=model_config,
+                num_choices=args.num_choices,
+                max_tokens=args.max_tokens,
+                answer_file=None,  # Will use answer_file from question dict
+                api_dict=api_dict,
+                stream=args.stream,
+                use_litellm=args.use_litellm,
+                force_temperature=args.force_temperature,
+                model_provider_override=args.model_provider_override,
+                model_display_name_override=model_display_name,
+                agentic_grading_parallel=args.agentic_grading_parallel,
+                parallel_control_file=args.parallel_control_file,
+                agentic_parallel=args.agentic_parallel,
+                resume=args.resume and not args.no_traj_harvest,
+                grading_parallel=args.grading_parallel,
+                incremental_grading=not args.no_incremental_grading
+            )
+
+    elif args.question_source == "jsonl":
+        # use locally-provided questions
+        # Collect all questions upfront across all benchmark names
+        all_questions = []
+
+        for bench_name in args.bench_name:
+            list_of_question_files = []
+            original_question_file = f"data/{bench_name}/question.jsonl"
+            if os.path.exists(original_question_file):
+                # if one specific file for bench_name exists, use it (e.g. if bench_name = live_bench/math/AMPS_Hard)
+                list_of_question_files = [original_question_file]
+            else:
+                # gather all question files for bench_name (e.g. if bench_name = live_bench/math)
+                list_of_question_files = glob.glob(
+                    f"data/{bench_name}/**/question.jsonl", recursive=True
+                )
+            
+            for question_file in list_of_question_files:
+                print(question_file)
+                questions = load_questions_jsonl(
+                    question_file, release_set, args.livebench_release_option, args.question_id
+                )
+                # inline LCB/coding grading needs the test cases attached (the
+                # judgment pass loads them the same way)
+                questions = load_test_cases_jsonl(question_file, questions)
+
+                questions = questions[args.question_begin:args.question_end]
+
+                bench_name_for_file = os.path.dirname(question_file).replace("data/", "")
+                answer_file = f"data/{bench_name_for_file}/model_answer/{model_display_name.lower()}.jsonl"
+
+                questions = filter_questions(questions, answer_file, args.resume, args.retry_failures)
+
+                # Attach answer_file to each question and task info for agentic_coding
+                for question in questions:
+                    question['answer_file'] = answer_file
+                    question['_judgment_file'] = (
+                        f"data/{bench_name_for_file}/model_judgment/ground_truth_judgment.jsonl"
+                    )
+                
+                all_questions.extend(questions)
+                        
+                print(f"Questions from {question_file}")
+                print(f"Output to {answer_file}")
+        
+        if all_questions:
+            print(f"Running {len(all_questions)} questions together across {len(args.bench_name)} benchmark(s)")
+            run_questions(
+                parallel=args.parallel,
+                questions=all_questions,
+                model_config=model_config,
+                model_display_name_override=model_display_name,
+                num_choices=args.num_choices,
+                max_tokens=args.max_tokens,
+                answer_file=None,  # Will use answer_file from question dict
+                api_dict=api_dict,
+                stream=args.stream,
+                use_litellm=args.use_litellm,
+                force_temperature=args.force_temperature,
+                model_provider_override=args.model_provider_override,
+                agentic_grading_parallel=args.agentic_grading_parallel,
+                parallel_control_file=args.parallel_control_file,
+                agentic_parallel=args.agentic_parallel,
+                resume=args.resume and not args.no_traj_harvest,
+                grading_parallel=args.grading_parallel,
+                incremental_grading=not args.no_incremental_grading
+            )
+
+    else:
+        raise ValueError(f"Bad question source {args.question_source}.")

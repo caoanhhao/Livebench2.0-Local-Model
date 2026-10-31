@@ -1,0 +1,504 @@
+
+# Google Models
+---
+display_name: gemma-2-27b-it
+api_name:
+  together: google/gemma-2-27b-it
+---
+display_name: gemma-2-9b-it
+api_name:
+  together: google/gemma-2-9b-it
+---
+display_name: gemini-1.5-pro-001
+api_name:
+  google: gemini-1.5-pro-001
+---
+display_name: gemini-1.5-flash-001
+api_name:
+  google: gemini-1.5-flash-001
+---
+display_name: gemini-1.5-pro-exp-0801
+api_name:
+  google: gemini-1.5-pro-exp-0801
+---
+display_name: gemini-1.5-pro-exp-0827
+api_name:
+  google: gemini-1.5-pro-exp-0827
+---
+display_name: gemini-1.5-flash-exp-0827
+api_name:
+  google: gemini-1.5-flash-exp-0827
+---
+display_name: gemini-1.5-flash-8b-exp-0827
+api_name:
+  google: gemini-1.5-flash-8b-exp-0827
+---
+display_name: gemini-1.5-pro-002
+api_name:
+  google: gemini-1.5-pro-002
+---
+display_name: gemini-1.5-flash-002
+api_name:
+  google: gemini-1.5-flash-002
+---
+display_name: gemini-exp-1114
+api_name:
+  google: gemini-exp-1114
+---
+display_name: gemini-exp-1121
+api_name:
+  google: gemini-exp-1121
+---
+display_name: gemini-1.5-flash-8b-001
+api_name:
+  google: gemini-1.5-flash-8b-001
+aliases:
+  - gemini-1.5-flash-8b
+---
+display_name: learnlm-1.5-pro-experimental
+api_name:
+  google: learnlm-1.5-pro-experimental
+---
+display_name: learnlm-2.0-flash-experimental
+api_name:
+  google: learnlm-2.0-flash-experimental
+---
+display_name: gemini-exp-1206
+api_name:
+  google: gemini-exp-1206
+---
+display_name: gemini-2.0-flash-exp
+api_name:
+  google: gemini-2.0-flash-exp
+---
+display_name: gemini-2.0-flash-thinking-exp-1219
+api_name:
+  google: gemini-2.0-flash-thinking-exp-1219
+api_kwargs:
+  max_output_tokens: 65536
+  temperature: 0.7
+  top_p: 0.95
+  thinking_config:
+    include_thoughts: true
+---
+display_name: gemini-2.0-flash-thinking-exp-01-21
+api_name:
+  google: gemini-2.0-flash-thinking-exp-01-21
+aliases:
+  - gemini-2.0-flash-thinking-exp
+api_kwargs:
+  max_output_tokens: 65536
+  temperature: 0.7
+  top_p: 0.95
+  thinking_config:
+    include_thoughts: true
+---
+display_name: gemini-2.0-pro-exp-02-05
+api_name:
+  google: gemini-2.0-pro-exp-02-05
+aliases:
+  - gemini-2.0-pro-exp
+---
+display_name: gemini-2.0-flash-001
+api_name:
+  google: gemini-2.0-flash-001
+aliases:
+  - gemini-2.0-flash
+---
+display_name: gemini-2.0-flash-lite-preview-02-05
+api_name:
+  google: gemini-2.0-flash-lite-preview-02-05
+---
+display_name: gemini-2.0-flash-lite-001
+api_name:
+  google: gemini-2.0-flash-lite-001
+aliases:
+  - gemini-2.0-flash-lite
+---
+display_name: gemma-3-27b-it
+api_name:
+  google: gemma-3-27b-it
+aliases:
+  - gemma-3-27b
+---
+display_name: gemma-3-12b-it
+api_name:
+  google: gemma-3-12b-it
+aliases:
+  - gemma-3-12b
+---
+display_name: gemma-3-4b-it
+api_name:
+  google: gemma-3-4b-it
+aliases:
+  - gemma-3-4b
+---
+display_name: gemini-2.5-pro-preview-03-25
+api_name:
+  google: gemini-2.5-pro-preview-03-25
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-2.5-flash-preview-04-17
+api_name:
+  google: gemini-2.5-flash-preview-04-17
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-2.5-pro-preview-05-06
+api_name:
+  google: gemini-2.5-pro-preview-05-06
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-2.5-flash-06-05-highthinking
+api_name:
+  google: gemini-2.5-flash
+aliases:
+  - gemini-2.5-flash-highthinking
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+    thinking_config:
+      thinking_budget: 24576
+---
+display_name: gemini-2.5-flash-06-05-nothinking
+api_name:
+  google: gemini-2.5-flash
+aliases:
+  - gemini-2.5-flash-06-05-nothinking
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+    thinking_config:
+      thinking_budget: 0
+---
+display_name: gemini-2.5-flash-06-05
+api_name:
+  google: gemini-2.5-flash
+aliases:
+  - gemini-2.5-flash
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+---
+display_name: gemini-2.5-pro-06-05-highthinking
+api_name:
+  google: gemini-2.5-pro
+aliases:
+  - gemini-2.5-pro-highthinking
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+    thinking_config:
+      thinking_budget: 32768
+---
+display_name: gemini-2.5-pro-06-05-default
+api_name:
+  google: gemini-2.5-pro
+aliases:
+  - gemini-2.5-pro
+  - gemini-2.5-pro-default
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-2.5-pro-06-05-minthinking
+api_name:
+  google: gemini-2.5-pro
+aliases:
+  - gemini-2.5-pro-minthinking
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+    thinking_config:
+      thinking_budget: 128
+---
+display_name: gemma-3n-e4b-it
+api_name:
+  google: gemma-3n-e4b-it
+aliases:
+  - gemma-3n-e4b
+---
+display_name: gemma-3n-e2b-it
+api_name:
+  google: gemma-3n-e2b-it
+aliases:
+  - gemma-3n-e2b
+---
+display_name: gemini-2.5-flash-lite-preview-06-17-highthinking
+api_name:
+  google: gemini-2.5-flash-lite
+aliases:
+  - gemini-2.5-flash-lite-preview
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+    thinking_config:
+      thinking_budget: 24576
+---
+display_name: gemini-2.5-flash-lite-highthinking
+api_name:
+  google: gemini-2.5-flash-lite
+aliases:
+  - gemini-2.5-flash-lite-highthinking
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+    thinking_config:
+      thinking_budget: 24576
+---
+display_name: gemini-2.5-flash-preview-09-2025-highthinking
+api_name:
+  google: gemini-2.5-flash-preview-09-2025
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+    thinking_config:
+      thinking_budget: 24576
+---
+display_name: gemini-2.5-flash-lite-preview-09-2025-highthinking
+api_name:
+  google: gemini-2.5-flash-lite-preview-09-2025
+api_kwargs:
+  default:
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+    thinking_config:
+      thinking_budget: 24576
+---
+display_name: gemini-3-pro-preview-11-2025-high
+api_name:
+  google: gemini-3-pro-preview
+aliases:
+  - gemini-3-pro-preview-high
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: high
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-3.1-pro-preview-high
+cost_per_million:
+  input: 2
+  cached_input: 0.2
+  output: 12
+api_name:
+  google: gemini-3.1-pro-preview
+aliases:
+  - gemini-3.1-pro-preview-high
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: high
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-3-pro-preview-11-2025-low
+api_name:
+  google: gemini-3-pro-preview
+aliases:
+  - gemini-3-pro-preview-low
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: low
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-3-flash-preview-high
+api_name:
+  google: gemini-3-flash-preview
+aliases:
+  - gemini-3-flash-preview-high
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: high
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-3.5-flash-high
+cost_per_million:
+  input: 1.5
+  cached_input: 0.15
+  output: 9
+api_name:
+  google: gemini-3.5-flash
+aliases:
+  - gemini-3.5-flash-high
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: high
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-3.5-flash-lite-high
+cost_per_million:
+  input: 0.3
+  cached_input: 0.03
+  output: 2.5
+api_name:
+  google: gemini-3.5-flash-lite
+aliases:
+  - gemini-3.5-flash-lite-high
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: high
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-3.6-flash-high
+cost_per_million:
+  input: 1.5
+  cached_input: 0.15
+  output: 7.5
+api_name:
+  google: gemini-3.6-flash
+aliases:
+  - gemini-3.6-flash-high
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: high
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-3.7-flash-high
+cost_per_million:
+  input: 0.75
+  cached_input: 0.075
+  output: 3.75
+api_name:
+  google: gemini-3.7-flash
+aliases:
+  - gemini-3.7-flash-high
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: high
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+# Published Google rates (https://ai.google.dev/gemini-api/docs/pricing, verified 2026-09-02):
+#   $0.75 in / $0.075 cached / $3.75 out (output incl. thinking tokens) = 0.1x cached
+#   INTRO PRICING through 2026-12-31; doubles 2027-01-01 to $1.50 / $0.15 / $7.50 — re-price then.
+#   No long-context tier. thinking_level ladder: low/medium/high (default medium; minimal
+#   rejected for 3.8 Flash — https://ai.google.dev/gemini-api/docs/thinking). Released 2026-09-02.
+display_name: gemini-3.8-flash-high
+cost_per_million:
+  input: 0.75
+  cached_input: 0.075
+  output: 3.75
+api_name:
+  google: gemini-3.8-flash
+aliases:
+  - gemini-3.8-flash-high
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: high
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-3-flash-preview-minimal
+api_name:
+  google: gemini-3-flash-preview
+aliases:
+  - gemini-3-flash-preview-minimal
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: minimal
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemini-3.1-flash-lite-preview-high
+api_name:
+  google: gemini-3.1-flash-lite-preview
+aliases:
+  - gemini-3.1-flash-lite-preview-high
+api_kwargs:
+  default:
+    thinking_config:
+      thinking_level: high
+    max_output_tokens: 65536
+    temperature: 1
+    top_p: 0.95
+---
+display_name: gemma-4-31b-it
+api_name:
+  google: gemma-4-31b-it
+  https://openrouter.ai/api/v1: google/gemma-4-31b-it
+default_provider: https://openrouter.ai/api/v1
+api_keys:
+  https://openrouter.ai/api/v1: OPENROUTER_API_KEY
+aliases:
+  - gemma-4-31b
+api_kwargs:
+  default:
+    temperature: 1.0
+    top_p: 0.95
+    max_tokens: 65536
+  https://openrouter.ai/api/v1:
+    extra_body:
+      reasoning:
+        enabled: true
+---
+display_name: gemma-4-31b-it-max
+# Novita, matching the v2 board's gemma431b-max column. reasoning_effort turns thinking on
+# (Novita returns no reasoning without it) and max is the top value it accepts.
+cost_per_million:
+  input: 0.14
+  output: 0.40
+api_name:
+  https://api.novita.ai/openai: google/gemma-4-31b-it
+default_provider: https://api.novita.ai/openai
+api_keys:
+  https://api.novita.ai/openai: NOVITA_API_KEY
+api_kwargs:
+  default:
+    temperature: 1.0
+    top_p: 0.95
+    max_tokens: 131072
+    stream: true
+    reasoning_effort: max

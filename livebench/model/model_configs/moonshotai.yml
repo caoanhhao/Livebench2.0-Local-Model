@@ -1,0 +1,118 @@
+---
+display_name: kimi-k2-instruct
+api_name:
+  together: moonshotai/Kimi-K2-Instruct
+  https://api.moonshot.ai/v1: kimi-k2-0711-preview
+  https://openrouter.ai/api/v1: moonshotai/kimi-k2
+default_provider: https://openrouter.ai/api/v1
+api_keys:
+  https://api.moonshot.ai/v1: MOONSHOTAI_API_KEY
+  https://openrouter.ai/api/v1: OPENROUTER_API_KEY
+api_kwargs:
+  default:
+    temperature: 0.6
+    max_tokens: 127000
+---
+display_name: kimi-k2-instruct-0905
+api_name:
+  https://api.moonshot.ai/v1: kimi-k2-0905-preview
+  deepinfra: moonshotai/Kimi-K2-Instruct-0905
+api_keys:
+  https://api.moonshot.ai/v1: MOONSHOTAI_API_KEY
+default_provider: deepinfra
+api_kwargs:
+  default:
+    temperature: 0.6
+    max_tokens: 127000
+---
+display_name: kimi-k2-thinking
+# novita's kimi-k2-thinking endpoint 400s ("thinking mode is not supported") on any request
+api_name:
+  https://api.moonshot.ai/v1: kimi-k2-thinking-turbo
+  https://openrouter.ai/api/v1: moonshotai/kimi-k2-thinking
+api_keys:
+  https://api.moonshot.ai/v1: MOONSHOTAI_API_KEY
+  https://openrouter.ai/api/v1: OPENROUTER_API_KEY
+default_provider: https://api.moonshot.ai/v1
+api_kwargs:
+  default:
+    temperature: 1
+    max_tokens: 128000
+    stream: true
+preserve_reasoning: true
+---
+display_name: kimi-k2.5-thinking
+api_name:
+  https://api.moonshot.ai/v1: kimi-k2.5
+api_keys:
+  https://api.moonshot.ai/v1: MOONSHOTAI_API_KEY
+default_provider: https://api.moonshot.ai/v1
+api_kwargs:
+  default:
+    temperature: 1.0
+    max_tokens: 128000
+    stream: true
+    extra_body:
+      thinking:
+        type: enabled
+preserve_reasoning: true
+---
+display_name: kimi-k2.6-thinking
+# Published Moonshot rates (verified 2026-08-04): $0.95 cache-miss input / $0.19 cache-hit /
+# $4.00 output = 0.20x. NOTE this is NOT kimi-k3's ratio: k3 is $3.00/$0.30/$15.00 = 0.10x.
+# Moonshot's cache discount differs per model generation -- never carry one model's rate over.
+cost_per_million:
+  input: 0.95
+  cached_input: 0.19
+  output: 4
+api_name:
+  https://api.moonshot.ai/v1: kimi-k2.6
+api_keys:
+  https://api.moonshot.ai/v1: MOONSHOTAI_API_KEY
+default_provider: https://api.moonshot.ai/v1
+api_kwargs:
+  default:
+    temperature: 1.0
+    max_tokens: 128000
+    stream: true
+    extra_body:
+      thinking:
+        type: enabled
+preserve_reasoning: true
+---
+display_name: kimi-k2.7-code
+# Published Moonshot rates (verified 2026-08-04): $0.95 cache-miss input / $0.19 cache-hit /
+# $4.00 output = 0.20x. NOTE this is NOT kimi-k3's ratio: k3 is $3.00/$0.30/$15.00 = 0.10x.
+# Moonshot's cache discount differs per model generation -- never carry one model's rate over.
+cost_per_million:
+  input: 0.95
+  cached_input: 0.19
+  output: 4
+api_name:
+  https://api.moonshot.ai/v1: kimi-k2.7-code
+api_keys:
+  https://api.moonshot.ai/v1: MOONSHOTAI_API_KEY
+default_provider: https://api.moonshot.ai/v1
+api_kwargs:
+  default:
+    temperature: 1.0
+    max_tokens: 127000
+    stream: true
+---
+display_name: kimi-k3
+cost_per_million:
+  input: 3.00
+  cached_input: 0.30
+  output: 15.00
+api_name:
+  https://api.moonshot.ai/v1: kimi-k3
+api_keys:
+  https://api.moonshot.ai/v1: MOONSHOTAI_API_KEY
+default_provider: https://api.moonshot.ai/v1
+api_kwargs:
+  default:
+    temperature: 1.0
+    max_tokens: 131072
+    stream: true
+    reasoning_effort: max
+preserve_reasoning: true

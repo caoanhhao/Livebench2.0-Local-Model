@@ -1,0 +1,96 @@
+import dataclasses
+import json
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from livebench.agentic_code_runner.minisweagent import Agent, __version__
+
+
+def _get_class_name_with_module(obj: Any) -> str:
+    """Get the full class name with module path."""
+    return f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+
+
+def _asdict(obj: Any) -> dict:
+    """Convert config objects to dicts."""
+    if dataclasses.is_dataclass(obj):
+        return dataclasses.asdict(obj)  # type: ignore[arg-type]
+    return obj  # let's try our luck
+
+
+def save_traj(
+    agent: Agent | None,
+    path: Path,
+    *,
+    print_path: bool = True,
+    exit_status: str | None = None,
+    result: str | None = None,
+    extra_info: dict | None = None,
+    print_fct: Callable = print,
+    **kwargs,
+):
+    """Save the trajectory of the agent to a file.
+
+    Args:
+        agent: The agent to save the trajectory of.
+        path: The path to save the trajectory to.
+        print_path: Whether to print confirmation of path to the terminal.
+        exit_status: The exit status of the agent.
+        result: The result/submission of the agent.
+        extra_info: Extra information to save (will be merged into the info dict).
+        **kwargs: Additional information to save (will be merged into top level)
+
+    """
+    data = {
+        "info": {
+            "exit_status": exit_status,
+            "submission": result,
+            "model_stats": {
+                "instance_cost": 0.0,
+                "api_calls": 0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_cached_tokens": 0,
+                "total_cache_creation_tokens": 0,
+            },
+            "mini_version": __version__,
+        },
+        "messages": [],
+        "trajectory_format": "mini-swe-agent-1",
+    } | kwargs
+    if agent is not None:
+        data["info"]["model_stats"]["instance_cost"] = agent.model.cost
+        data["info"]["model_stats"]["api_calls"] = agent.model.n_calls
+        data["info"]["model_stats"]["total_input_tokens"] = agent.model.input_tokens
+        data["info"]["model_stats"]["total_output_tokens"] = agent.model.output_tokens
+        data["info"]["model_stats"]["total_cached_tokens"] = getattr(agent.model, "cached_tokens", 0)
+        data["info"]["model_stats"]["total_cache_creation_tokens"] = getattr(agent.model, "cache_creation_tokens", 0)
+        # Empty-response resampling observability (getattr-guarded for model classes that lack it)
+        data["info"]["model_stats"]["empty_responses"] = getattr(agent.model, "empty_responses", 0)
+        data["info"]["model_stats"]["empty_resamples_recovered"] = getattr(agent.model, "empty_resamples_recovered", 0)
+        # actions that arrived as tool_use blocks (== api_calls when every turn tool-called)
+        data["info"]["model_stats"]["native_tool_use_turns"] = getattr(agent.model, "native_tool_use_turns", 0)
+        start_time = getattr(agent, "_start_time", None)
+        if start_time is not None:
+            data["info"]["model_stats"]["run_time_s"] = round(time.monotonic() - start_time, 1)
+        for message in agent.messages:
+            if 'extra' in message:
+                del message['extra']
+            data["messages"].append(message)
+        data["info"]["config"] = {
+            "agent": _asdict(agent.config),
+            "model": _asdict(agent.model.config),
+            "environment": _asdict(agent.env.config),
+            "agent_type": _get_class_name_with_module(agent),
+            "model_type": _get_class_name_with_module(agent.model),
+            "environment_type": _get_class_name_with_module(agent.env),
+        }
+    if extra_info:
+        data["info"].update(extra_info)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+    if print_path:
+        print_fct(f"Saved trajectory to '{path}'")
