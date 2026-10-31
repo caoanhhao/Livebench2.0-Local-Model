@@ -1,31 +1,26 @@
 #!/bin/bash
-# Run LiveBench for 3 ollama local models, save per-model results
-set -euo pipefail
-VENV=".venv"
-API_BASE="http://localhost:11434/v1"
-BENCH="live_bench"
-RELEASE="2024-11-25"
+# Chạy LiveBench cho các model ollama truyền vào dòng lệnh (lần lượt từng model).
+# Mỗi model gọi test_model.sh -> max-tokens = num_ctx của ollama, log ở results/<model>/
+#
+# Cách dùng:
+#   BENCH=live_bench/reasoning QUESTION_END=5 bash run_models.sh <model1> [model2 ...]
+#   bash run_models.sh saluki100k:latest Nemotron-3.5-Bolt-E4B-4GB:Q4_K_M
+set -uo pipefail
+WORKDIR="$(cd "$(dirname "$0")" && pwd)"
+BENCH="${BENCH:-live_bench}"
+QUESTION_END="${QUESTION_END:-}"
 
-activate() { source "$VENV/bin/activate"; }
+if [ $# -eq 0 ]; then
+  echo "==> Sử dụng: [BENCH=...] [QUESTION_END=N] bash run_models.sh <model1> [model2 ...]"
+  exit 1
+fi
 
-run_model() {
-  local model_name="$1"
-  local display_name="$2"
-  local out_dir="results/${display_name}"
-  echo "=== Running $display_name (model: $model_name) ==="
-  mkdir -p "$out_dir"
-  python livebench/run_livebench.py \
-    --model "$model_name" \
-    --bench-name "$BENCH" \
-    --api-base "$API_BASE" \
-    --model-display-name "$display_name" \
-    --livebench-release-option "$RELEASE" \
-    --mode single \
-    --parallel-requests 2 \
-    --max-tokens 4096 \
-    2>&1 | tee "$out_dir/full_run_$(date +%Y%m%d_%H%M%S).txt"
-  echo "=== $display_name finished ==="
-}
+failed=0
+for model in "$@"; do
+  echo "=== Running $model (bench: $BENCH) ==="
+  bash "$WORKDIR/test_model.sh" "$model" "$BENCH" $QUESTION_END || failed=$((failed + 1))
+  echo "=== $model finished ==="
+done
 
-# Configure per-model file outputs (markdown summaries from answers)
-echo "Results saved per model in results/<model_name>/"
+echo "Results saved per model in results/<model_name>/ ($failed model lỗi)"
+exit $((failed > 0))

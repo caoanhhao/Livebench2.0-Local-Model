@@ -1,28 +1,30 @@
 #!/bin/bash
+# Chạy LiveBench cho các model ollama đã cấu hình bên dưới (lần lượt từng model).
+# Mỗi model gọi test_model.sh -> max-tokens = num_ctx của ollama, log ở results/<model>/
+#
+# Cách dùng:
+#   bash run_all_models.sh [bench_name] [question_end]
+#   bash run_all_models.sh live_bench/reasoning 5
 set -uo pipefail
-source /home/caoanhhao/projects/livebench2.0/Livebench2.0/.venv/bin/activate
-WORKDIR=/home/caoanhhao/projects/livebench2.0/Livebench2.0/livebench
-cd $WORKDIR
+WORKDIR="$(cd "$(dirname "$0")" && pwd)"
+BENCH="${1:-live_bench}"
+QUESTION_END="${2:-}"
 
-run_model() {
-  local model_name="$1"
-  local display_name="$2"
-  local out_file="$3"
-  echo "=== Starting $display_name at $(date -Iseconds) ===" >> "$out_file"
-  python run_livebench.py \
-    --model "$model_name" \
-    --bench-name live_bench \
-    --api-base http://localhost:11434/v1 \
-    --model-display-name "$display_name" \
-    --livebench-release-option 2024-11-25 \
-    --mode single --parallel-requests 2 --max-tokens 4096 \
-    >> "$out_file" 2>&1
-  echo "=== Finished $display_name at $(date -Iseconds) ===" >> "$out_file"
-  echo "Exit code: $?" >> "$out_file"
-}
+MODELS=(
+  "Qwen3.5-9B-DeepSeek-V4-Flash-GGUF:latest"
+  "saluki100k:latest"
+  "Nemotron-3.5-Bolt-E4B-4GB:Q4_K_M"
+)
 
-echo "=== Running 3 local ollama models ===" >> /home/caoanhhao/projects/livebench2.0/Livebench2.0/results/summary.md
+SUMMARY="$WORKDIR/results/summary.md"
+mkdir -p "$WORKDIR/results"
+echo "=== $(date -Iseconds) Chạy ${#MODELS[@]} model, bench: $BENCH ===" >> "$SUMMARY"
 
-run_model "Qwen3.5-9B-DeepSeek-V4-Flash-GGUF:latest" "Qwen3.5-9B-DeepSeek-V4-Flash" "/home/caoanhhao/projects/livebench2.0/Livebench2.0/results/Qwen3.5-9B-DeepSeek-V4-Flash/run_2026-10-31.log"
-run_model "saluki100k:latest" "saluki100k" "/home/caoanhhao/projects/livebench2.0/Livebench2.0/results/saluki100k/run_2026-10-31.log"
-run_model "nemotron-3.5-bolt:e4b" "nemotron-3.5-bolt" "/home/caoanhhao/projects/livebench2.0/Livebench2.0/results/nemotron-3.5-bolt/run_2026-10-31.log"
+for model in "${MODELS[@]}"; do
+  echo "=== Bắt đầu $model lúc $(date -Iseconds) ==="
+  bash "$WORKDIR/test_model.sh" "$model" "$BENCH" $QUESTION_END
+  status=$?
+  echo "- $model: exit $status ($(date -Iseconds))" >> "$SUMMARY"
+done
+
+echo "==> Xong. Tóm tắt: $SUMMARY"
