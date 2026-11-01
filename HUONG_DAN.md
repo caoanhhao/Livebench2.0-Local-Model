@@ -46,5 +46,7 @@ Cả hai script đều gọi `test_model.sh` cho từng model. `run_all_models.s
 
 ## 5. Tuỳ chỉnh
 - Đổi benchmark: tham số thứ 2 của `test_model.sh` (`live_bench/coding`, `live_bench/reasoning`, ...)
-- Đổi số request song song: sửa `--parallel-requests 2` trong `test_model.sh`
-- Đổi số token tối đa: sửa `PARAMETER num_ctx` trong Modelfile của ollama (script tự lấy theo)
+- Số câu gửi song song: `PARALLEL=2 bash test_model.sh ...` (mặc định 1)
+- Timeout mỗi request: tự tính = max-tokens/30 + 600 giây; đổi bằng `LIVEBENCH_TIMEOUT=7200 bash test_model.sh ...`
+- Số token tối đa: lấy theo `PARAMETER num_ctx` trong Modelfile của ollama. Muốn giới hạn tạm thời: `MAX_TOKENS_CAP=8192 bash test_model.sh ...`
+- Phát hiện lặp: mặc định bật (`LIVEBENCH_LOOP_DETECT=1`). Câu trả lời bị lặp lại liên tục (32k ký tự cuối nén còn < 8%) sẽ bị dừng sớm và tính 0 điểm, thay vì chạy hết max-tokens/timeout. Tắt bằng `LIVEBENCH_LOOP_DETECT=0`.

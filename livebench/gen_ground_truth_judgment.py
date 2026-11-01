@@ -3,6 +3,7 @@ Usage:
 python gen_ground_truth_judgment.py --bench-name live_bench --model-list [LIST-OF-MODEL-ID] --parallel [num-concurrent-api-call] --mode [single|pairwise-baseline|pairwise-all]
 """
 import argparse
+import itertools
 from concurrent.futures import ThreadPoolExecutor
 import json
 import time
@@ -477,8 +478,8 @@ def gen_judgments(
         nltk.download('averaged_perceptron_tagger')
         
         # Get questions for this category
-        if_questions = list(set([m.question for m in old_instruction_following_matches]))
-        task_name = if_questions[0]['task']
+        # Questions are dicts (unhashable): dedupe by question_id
+        if_questions = list({m.question['question_id']: m.question for m in old_instruction_following_matches}.values())
 
         # Build a qid-keyed answer view from the matches themselves so colliding
         # question_ids from other tasks can't leak in (model_answers may be keyed
@@ -491,8 +492,11 @@ def gen_judgments(
             for q in if_answers[m]:
                 if_answers[m][q]['choices'][0]['turns'][0] = re.sub(f"<think>.*?<\/think>", "", if_answers[m][q]['choices'][0]['turns'][0], flags=re.DOTALL).strip()
 
-        for model_id in models:
-            scores = instruction_following_process_results(if_questions, if_answers, task_name, model_id, debug)
+        # Pooled runs mix several IF tasks; score each task separately
+        if_tasks = sorted({q['task'] for q in if_questions})
+        for model_id, task_name in itertools.product(models, if_tasks):
+            task_questions = [q for q in if_questions if q['task'] == task_name]
+            scores = instruction_following_process_results(task_questions, if_answers, task_name, model_id, debug)
             for item in scores:
                 question_id = item["question_id"]
                 score = item["score"]

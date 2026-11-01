@@ -23,7 +23,22 @@ API_MAX_RETRY = 1
 API_RETRY_SLEEP_MIN = 10
 API_RETRY_SLEEP_MAX = 60
 API_ERROR_OUTPUT = "$ERROR$"
-TIMEOUT = 1800
+TIMEOUT = int(os.environ.get("LIVEBENCH_TIMEOUT", 1800))
+# Loop detection (LIVEBENCH_LOOP_DETECT=1): stream the answer and abort once the last
+# LOOP_WINDOW chars compress below LOOP_RATIO, i.e. the model is repeating itself and
+# would otherwise burn the whole max_tokens / timeout for a 0 score.
+LOOP_DETECT = os.environ.get("LIVEBENCH_LOOP_DETECT") == "1"
+LOOP_WINDOW = int(os.environ.get("LIVEBENCH_LOOP_WINDOW", 32000))
+LOOP_RATIO = float(os.environ.get("LIVEBENCH_LOOP_RATIO", 0.08))
+LOOP_CHECK_EVERY = 4000
+
+
+def _is_looping(text: str) -> bool:
+    import zlib
+    if len(text) < LOOP_WINDOW:
+        return False
+    tail = text[-LOOP_WINDOW:].encode()
+    return len(zlib.compress(tail)) / len(tail) < LOOP_RATIO
 
 # Models gated on 30-day retention (Fable/Mythos tier): the org-default
 # ANTHROPIC_API_KEY is ZDR and gets 400 model_not_available for them, so they
@@ -138,7 +153,7 @@ def chat_completion_openai(
 
     if api_dict is not None:
         client = OpenAI(
-            api_key=api_dict["api_key"], base_url=api_dict["api_base"], timeout=httpx.Timeout(timeout=TIMEOUT, connect=10.0)
+            api_key=api_dict["api_key"], base_url=api_dict["api_base"], timeout=httpx.Timeout(timeout=TIMEOUT, connect=10.0), max_retries=0
         )
 
     else:
@@ -162,6 +177,8 @@ def chat_completion_openai(
     if 'stream' in actual_api_kwargs:
         stream = actual_api_kwargs['stream']
         del actual_api_kwargs['stream']
+    if LOOP_DETECT and api_dict is not None:
+        stream = True
 
     # Thinking models return their chain of thought on a separate field, never in
     # `content`. Without capturing it here the reasoning is generated, billed, and
@@ -182,6 +199,9 @@ def chat_completion_openai(
             num_tokens = None
             input_tokens = None
             cached_tokens = None
+            # httpx timeout only bounds the gap between chunks when streaming; keep TIMEOUT as a wall-clock limit
+            deadline = time.time() + TIMEOUT
+            next_check = LOOP_CHECK_EVERY
             try:
                 for chunk in stream:
                     if chunk.choices and len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None:
@@ -189,9 +209,19 @@ def chat_completion_openai(
                         message += _text
                         reasoning_text += _thinking
                     if chunk.choices and len(chunk.choices) > 0:
-                        _r = getattr(chunk.choices[0].delta, 'reasoning_content', None)
+                        # ollama streams thinking as `reasoning`, other providers as `reasoning_content`
+                        _r = getattr(chunk.choices[0].delta, 'reasoning_content', None) or getattr(chunk.choices[0].delta, 'reasoning', None)
                         if _r:
                             reasoning_text += _r
+                    generated = len(reasoning_text) + len(message)
+                    if LOOP_DETECT and generated >= next_check:
+                        next_check = generated + LOOP_CHECK_EVERY
+                        if _is_looping(reasoning_text + message):
+                            stream.close()
+                            raise Exception(f"Loop detected: output repeating after {generated} chars")
+                        if time.time() > deadline:
+                            stream.close()
+                            raise Exception(f"Request timed out: {TIMEOUT}s wall clock after {generated} chars")
                     if chunk.usage is not None:
                         # raw provider usage (no litellm rewrite), so its own total_tokens is intact
                         num_tokens = billed_output_tokens(chunk.usage)
@@ -266,7 +296,7 @@ def chat_completion_openai_responses(model: str, messages: Conversation, tempera
 
     if api_dict is not None:
         client = OpenAI(
-            api_key=api_dict["api_key"], base_url=api_dict["api_base"], timeout=httpx.Timeout(timeout=TIMEOUT, connect=20.0)
+            api_key=api_dict["api_key"], base_url=api_dict["api_base"], timeout=httpx.Timeout(timeout=TIMEOUT, connect=20.0), max_retries=0
         )
     else:
         client = OpenAI(timeout=TIMEOUT)
