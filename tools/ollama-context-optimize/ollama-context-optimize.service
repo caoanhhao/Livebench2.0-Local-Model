@@ -1,0 +1,13 @@
+[Unit]
+Description=Ollama context optimize: chọn bản model <họ>NNNk theo độ dài ngữ cảnh (proxy trước Ollama)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 -I %h/projects/livebench2.0/tools/ollama-context-optimize/ollama_context_optimize.py
+Environment=SALUKI_AUTO_LISTEN=127.0.0.1:11435
+Environment=SALUKI_AUTO_UPSTREAM=http://127.0.0.1:11434
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
